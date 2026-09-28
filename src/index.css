@@ -223,8 +223,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .template-form-panel, .template-live-preview, .detail-summary, .detail-document { min-width: 0; border: 1px solid #37352e; border-radius: 4px; background: #191917; }
 .template-form-panel { padding: 18px; }
 .template-metadata-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 13px; margin-top: 16px; }
+.pdf-import-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 10px 12px; border: 1px dashed #4b473d; border-radius: 4px; background: rgba(121, 103, 63, 0.08); }
+.pdf-import-row > span { color: #a29d90; font-size: 10px; line-height: 1.4; }
+.pdf-import-button { min-height: 34px; padding: 0 12px; font-size: 10px; }
 .template-content-label { margin-top: 17px; }
 .preview-toggle { border-color: #403d33; }
+.contract-pdf-preview-wrap { display: grid; gap: 8px; padding: 10px; border: 1px solid #d9d5ca; background: #f3f0e8; box-shadow: 0 6px 19px #0005; }
+.contract-pdf-canvas { display: block; width: 100%; max-height: 660px; border: 1px solid #d0c9bd; background: #fff; }
+.pdf-overlay-note { color: #665f53; font-size: 9px; font-weight: 700; letter-spacing: .8px; text-align: center; text-transform: uppercase; }
 .placeholder-summary { display: grid; gap: 9px; margin-top: 12px; }
 .placeholder-summary > span { display: inline-flex; align-items: center; gap: 6px; color: #aaa497; font-size: 10px; }
 .placeholder-summary > span svg { color: var(--gold); }

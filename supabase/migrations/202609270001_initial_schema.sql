@@ -223,7 +223,7 @@ create policy "audit_insert_self" on public.audit_logs for insert to authenticat
 with check (user_id = (select auth.uid()));
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('contract-pdfs', 'contract-pdfs', false, 15728640, array['application/pdf'])
+values ('contract-pdfs', 'contract-pdfs', false, 15728640, array['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
 on conflict (id) do nothing;
 
 create policy "contract_pdf_read_owner_or_admin" on storage.objects for select to authenticated

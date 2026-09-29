@@ -1,5 +1,6 @@
 import { createElement } from 'react'
 import { DEMO_CONTRACTS, DEMO_TEMPLATE } from '../data/demo'
+import { createBlankOfficialDocx, createOfficialDocx, OFFICIAL_DOCX_ID } from '../data/officialDocxTemplate'
 import { listClients, listProperties } from './records'
 import { formatPropertyAddress } from '../utils/format'
 import { demoMode, supabase } from '../lib/supabase'
@@ -29,13 +30,19 @@ export interface CreateContractInput {
 }
 
 export async function createAndDownloadContract(input: CreateContractInput) {
-  const [{ pdf }, { ContractPdfDocument }] = await Promise.all([
-    import('@react-pdf/renderer'),
-    import('../components/ContractPdf'),
-  ])
+  const isOfficialWord = input.template.id === OFFICIAL_DOCX_ID
+  let blob: Blob
+  if (isOfficialWord) {
+    blob = await createOfficialDocx(input.values)
+  } else {
+    const [{ pdf }, { ContractPdfDocument }] = await Promise.all([
+      import('@react-pdf/renderer'),
+      import('../components/ContractPdf'),
+    ])
+    blob = await pdf(createElement(ContractPdfDocument, { title: input.template.name, content: input.renderedContent })).toBlob()
+  }
   const safeName = input.template.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
-  const blob = await pdf(createElement(ContractPdfDocument, { title: input.template.name, content: input.renderedContent })).toBlob()
-  const fileName = `contrato-${safeName}-${new Date().toISOString().slice(0, 10)}.pdf`
+  const fileName = `contrato-${safeName}-${new Date().toISOString().slice(0, 10)}.${isOfficialWord ? 'docx' : 'pdf'}`
 
   if (demoMode) {
     const [clients, properties] = await Promise.all([listClients(), listProperties()])
@@ -67,10 +74,11 @@ export async function createAndDownloadContract(input: CreateContractInput) {
   await supabase.from('audit_logs').insert({ user_id: authData.user.id, action: 'contract.created', entity_type: 'contract', entity_id: contract.id, metadata: { template_id: input.template.id } })
 
   const storagePath = `${authData.user.id}/${contract.id}/${fileName}`
-  const { error: uploadError } = await supabase.storage.from('contract-pdfs').upload(storagePath, blob, { contentType: 'application/pdf', upsert: false })
+  const contentType = isOfficialWord ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf'
+  const { error: uploadError } = await supabase.storage.from('contract-pdfs').upload(storagePath, blob, { contentType, upsert: false })
   if (uploadError) {
     await supabase.from('contracts').update({ status: 'pdf_failed' }).eq('id', contract.id)
-    throw new Error('O contrato foi registrado, mas não foi possível armazenar o PDF. Tente gerar novamente.')
+    throw new Error('O contrato foi registrado, mas não foi possível armazenar o documento. Tente gerar novamente.')
   }
 
   const { error: updateError } = await supabase.from('contracts').update({ status: 'generated', file_name: fileName, pdf_path: storagePath }).eq('id', contract.id)
@@ -174,18 +182,23 @@ export async function getContractDetails(id: string) {
 export async function downloadSavedContract(id: string) {
   if (demoMode) {
     const saved = getSavedDemoContracts().find((item) => item.id === id)
-    if (!saved) throw new Error('Este registro demonstrativo não possui um arquivo PDF salvo.')
-    const [{ pdf }, { ContractPdfDocument }] = await Promise.all([
-      import('@react-pdf/renderer'),
-      import('../components/ContractPdf'),
-    ])
-    const blob = await pdf(createElement(ContractPdfDocument, { title: saved.name, content: saved.content })).toBlob()
-    downloadBlob(blob, saved.fileName)
+    if (!saved) throw new Error('Este registro demonstrativo não possui um arquivo salvo.')
+    if (saved.templateId === OFFICIAL_DOCX_ID) {
+      const blob = await createOfficialDocx(saved.values)
+      downloadBlob(blob, saved.fileName)
+    } else {
+      const [{ pdf }, { ContractPdfDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('../components/ContractPdf'),
+      ])
+      const blob = await pdf(createElement(ContractPdfDocument, { title: saved.name, content: saved.content })).toBlob()
+      downloadBlob(blob, saved.fileName)
+    }
     return
   }
   if (!supabase) throw new Error('Configure o Supabase para baixar arquivos protegidos.')
   const { data, error } = await supabase.from('contracts').select('pdf_path, file_name').eq('id', id).single()
-  if (error || !data?.pdf_path) throw new Error('O PDF não está disponível para este contrato.')
+  if (error || !data?.pdf_path) throw new Error('O documento não está disponível para este contrato.')
   const { data: file, error: fileError } = await supabase.storage.from('contract-pdfs').createSignedUrl(data.pdf_path, 60, { download: data.file_name ?? true })
   if (fileError) throw fileError
   const anchor = document.createElement('a')
@@ -204,4 +217,9 @@ function downloadBlob(blob: Blob, fileName: string) {
   anchor.download = fileName
   anchor.click()
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export async function downloadBlankOfficialContract() {
+  const blob = await createBlankOfficialDocx()
+  downloadBlob(blob, `modelo-em-branco-miellis-${new Date().toISOString().slice(0, 10)}.docx`)
 }

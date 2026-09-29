@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { demoMode } from '../lib/supabase'
+import { OFFICIAL_DOCX_ID } from '../data/officialDocxTemplate'
 import { listTemplates, setTemplateStatus } from '../services/templates'
 import type { ContractTemplate } from '../types/domain'
 
@@ -44,7 +45,7 @@ export function TemplatesPage() {
   return (
     <div className="templates-page">
       <section className="page-heading-row"><div><span className="section-overline">BIBLIOTECA · ADMINISTRAÇÃO</span><h1>Modelos de contrato</h1><p>Gerencie os documentos aprovados para uso pela equipe.</p></div><Link className="gold-button" to="/modelos/novo"><FilePlus2 size={16} />Novo modelo</Link></section>
-      {demoMode && <div className="demo-warning"><span className="demo-badge"><i />DEMONSTRAÇÃO</span>O único modelo incluído é técnico e não jurídico. Modelos adicionados aqui ficam apenas neste navegador.</div>}
+      {demoMode && <div className="demo-warning"><span className="demo-badge"><i />DEMONSTRAÇÃO</span>Incluímos o modelo-base de compra e venda enviado pela Miellis. As alterações ficam apenas neste navegador; revise o documento com o responsável jurídico antes do uso real.</div>}
       {error && <div className="inline-alert" role="alert">{error}</div>}
       <section className="template-library">
         <div className="history-toolbar template-toolbar"><label className="search-control"><Search size={16} /><input aria-label="Buscar modelo" placeholder="Buscar modelo..." value={query} onChange={(event) => setQuery(event.target.value)} /></label><span className="template-total">{visible.length} {visible.length === 1 ? 'modelo' : 'modelos'}</span></div>
@@ -54,7 +55,7 @@ export function TemplatesPage() {
             <td>{template.type}{template.demonstration && <small>Modo demo</small>}</td><td>v{template.version}</td>
             <td><span className={`status-pill ${template.status === 'active' ? 'status-generated' : 'status-inactive'}`}><i />{template.status === 'active' ? 'Ativo' : 'Inativo'}</span></td>
             <td>{template.versionHistory?.at(-1)?.createdAt ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(new Date(template.versionHistory.at(-1)!.createdAt)) : '—'}</td>
-            <td><div className="row-actions"><button className="icon-button" type="button" title="Visualizar modelo" aria-label={`Visualizar ${template.name}`} onClick={() => setPreview(template)}><Eye size={15} /></button><Link className="icon-button" to={template.id === 'demo-template-v1' ? '/modelos/novo' : `/modelos/${template.id}/editar`} state={{ template }} title="Editar" aria-label={`Editar ${template.name}`}><Pencil size={14} /></Link><Link className="icon-button" to="/modelos/novo" state={{ template, duplicate: true }} title="Duplicar" aria-label={`Duplicar ${template.name}`}><Copy size={14} /></Link><button className="icon-button" type="button" title={template.status === 'active' ? 'Desativar' : 'Ativar'} aria-label={`${template.status === 'active' ? 'Desativar' : 'Ativar'} ${template.name}`} onClick={() => void toggle(template)}><Power size={14} /></button></div></td>
+            <td><div className="row-actions"><button className="icon-button" type="button" title="Visualizar modelo" aria-label={`Visualizar ${template.name}`} onClick={() => setPreview(template)}><Eye size={15} /></button>{template.id !== OFFICIAL_DOCX_ID && <><Link className="icon-button" to={template.id === 'demo-template-v1' ? '/modelos/novo' : `/modelos/${template.id}/editar`} state={{ template }} title="Editar" aria-label={`Editar ${template.name}`}><Pencil size={14} /></Link><Link className="icon-button" to="/modelos/novo" state={{ template, duplicate: true }} title="Duplicar" aria-label={`Duplicar ${template.name}`}><Copy size={14} /></Link></>}<button className="icon-button" type="button" title={template.status === 'active' ? 'Desativar' : 'Ativar'} aria-label={`${template.status === 'active' ? 'Desativar' : 'Ativar'} ${template.name}`} onClick={() => void toggle(template)}><Power size={14} /></button></div></td>
           </tr>)}
           {!loading && visible.length === 0 && <tr><td className="empty-table" colSpan={6}>Nenhum modelo encontrado.</td></tr>}
           {loading && <tr><td className="empty-table" colSpan={6}>Carregando modelos...</td></tr>}

@@ -73,10 +73,10 @@ export function isValidCpfCnpj(value: string) {
 }
 
 export function validateContractFields(keys: string[], values: Record<string, string>) {
-  const missing = keys.find((key) => !values[key]?.trim())
+  const missing = keys.find((key) => !key.startsWith('opcional_') && !values[key]?.trim())
   if (missing) return `Preencha o campo "${missing.replaceAll('_', ' ')}" antes de gerar o contrato.`
 
-  for (const key of keys.filter((field) => /cpf|cnpj/i.test(field))) {
+  for (const key of keys.filter((field) => !field.startsWith('opcional_') && /cpf|cnpj/i.test(field))) {
     if (!isValidCpfCnpj(values[key])) return `Confira o CPF/CNPJ informado em "${key.replaceAll('_', ' ')}".`
   }
 

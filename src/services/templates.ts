@@ -1,4 +1,5 @@
 import { DEMO_TEMPLATE } from '../data/demo'
+import { OFFICIAL_SALE_TEMPLATE } from '../data/officialSaleTemplate'
 import { extractPlaceholders } from '../lib/placeholders'
 import { demoMode, supabase } from '../lib/supabase'
 import type { ContractTemplate, ContractTemplateField } from '../types/domain'
@@ -9,9 +10,13 @@ const templatePdfCache = new Map<string, Promise<Uint8Array>>()
 function getDemoTemplates(): ContractTemplate[] {
   try {
     const saved = JSON.parse(localStorage.getItem(DEMO_TEMPLATES_KEY) ?? '[]') as ContractTemplate[]
-    return [saved.find((template) => template.id === DEMO_TEMPLATE.id) ?? DEMO_TEMPLATE, ...saved.filter((template) => template.id !== DEMO_TEMPLATE.id)]
+    const defaults = [OFFICIAL_SALE_TEMPLATE, DEMO_TEMPLATE]
+    return [
+      ...defaults.map((template) => saved.find((item) => item.id === template.id) ?? template),
+      ...saved.filter((item) => !defaults.some((template) => template.id === item.id)),
+    ]
   } catch {
-    return [DEMO_TEMPLATE]
+    return [OFFICIAL_SALE_TEMPLATE, DEMO_TEMPLATE]
   }
 }
 

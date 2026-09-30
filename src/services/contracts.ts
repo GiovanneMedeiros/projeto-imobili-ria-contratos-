@@ -1,5 +1,6 @@
 import { createElement } from 'react'
 import { DEMO_CONTRACTS, DEMO_TEMPLATE } from '../data/demo'
+import { createBlankOfficialDocx, createOfficialDocx, OFFICIAL_DOCX_ID } from '../data/officialDocxTemplate'
 import { fillPdfFields, fillPdfPlaceholders } from '../lib/pdf'
 import { extractPlaceholders, formatTemplateValue } from '../lib/placeholders'
 import { getTemplatePdfBytes, listTemplates } from './templates'
@@ -214,9 +215,10 @@ export async function renderContractPdf(input: Pick<CreateContractInput, 'templa
 }
 
 export async function createAndDownloadContract(input: CreateContractInput) {
+  const isOfficialWord = input.template.id === OFFICIAL_DOCX_ID
+  const blob = isOfficialWord ? await createOfficialDocx(input.values) : await renderContractPdf(input)
   const safeName = input.template.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
-  const blob = await renderContractPdf(input)
-  const fileName = `contrato-${safeName}-${new Date().toISOString().slice(0, 10)}.pdf`
+  const fileName = `contrato-${safeName}-${new Date().toISOString().slice(0, 10)}.${isOfficialWord ? 'docx' : 'pdf'}`
 
   if (demoMode) {
     const [clients, properties] = await Promise.all([listClients(), listProperties()])
@@ -248,10 +250,11 @@ export async function createAndDownloadContract(input: CreateContractInput) {
   await supabase.from('audit_logs').insert({ user_id: authData.user.id, action: 'contract.created', entity_type: 'contract', entity_id: contract.id, metadata: { template_id: input.template.id } })
 
   const storagePath = `${authData.user.id}/${contract.id}/${fileName}`
-  const { error: uploadError } = await supabase.storage.from('contract-pdfs').upload(storagePath, blob, { contentType: 'application/pdf', upsert: false })
+  const contentType = isOfficialWord ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf'
+  const { error: uploadError } = await supabase.storage.from('contract-pdfs').upload(storagePath, blob, { contentType, upsert: false })
   if (uploadError) {
     await supabase.from('contracts').update({ status: 'pdf_failed' }).eq('id', contract.id)
-    throw new Error('O contrato foi registrado, mas não foi possível armazenar o PDF. Tente gerar novamente.')
+    throw new Error('O contrato foi registrado, mas não foi possível armazenar o documento. Tente gerar novamente.')
   }
 
   const { error: updateError } = await supabase.from('contracts').update({ status: 'generated', file_name: fileName, pdf_path: storagePath }).eq('id', contract.id)
@@ -355,15 +358,18 @@ export async function getContractDetails(id: string) {
 export async function downloadSavedContract(id: string) {
   if (demoMode) {
     const saved = getSavedDemoContracts().find((item) => item.id === id)
-    if (!saved) throw new Error('Este registro demonstrativo não possui um arquivo PDF salvo.')
-    const template = (await listTemplates(true)).find((item) => item.id === saved.templateId) ?? DEMO_TEMPLATE
-    const blob = await renderContractPdf({ template, values: saved.values, renderedContent: saved.content })
-    downloadBlob(blob, saved.fileName)
+    if (!saved) throw new Error('Este registro demonstrativo não possui um arquivo salvo.')
+    if (saved.templateId === OFFICIAL_DOCX_ID) {
+      downloadBlob(await createOfficialDocx(saved.values), saved.fileName)
+    } else {
+      const template = (await listTemplates(true)).find((item) => item.id === saved.templateId) ?? DEMO_TEMPLATE
+      downloadBlob(await renderContractPdf({ template, values: saved.values, renderedContent: saved.content }), saved.fileName)
+    }
     return
   }
   if (!supabase) throw new Error('Configure o Supabase para baixar arquivos protegidos.')
   const { data, error } = await supabase.from('contracts').select('pdf_path, file_name').eq('id', id).single()
-  if (error || !data?.pdf_path) throw new Error('O PDF não está disponível para este contrato.')
+  if (error || !data?.pdf_path) throw new Error('O documento não está disponível para este contrato.')
   const { data: file, error: fileError } = await supabase.storage.from('contract-pdfs').createSignedUrl(data.pdf_path, 60, { download: data.file_name ?? true })
   if (fileError) throw fileError
   const anchor = document.createElement('a')
@@ -382,4 +388,9 @@ function downloadBlob(blob: Blob, fileName: string) {
   anchor.download = fileName
   anchor.click()
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export async function downloadBlankOfficialContract() {
+  const blob = await createBlankOfficialDocx()
+  downloadBlob(blob, `modelo-em-branco-miellis-${new Date().toISOString().slice(0, 10)}.docx`)
 }

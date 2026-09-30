@@ -1,16 +1,17 @@
-import { AlertCircle, ArrowRight, Check, FileText, Info, LoaderCircle, UserRound, Building2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { AlertCircle, ArrowLeft, ArrowRight, Check, Download, FileText, Info, LoaderCircle, UserRound, Building2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { ClientEditor, PropertyEditor } from './RecordsPages'
-import { createAndDownloadContract, renderContractPdf } from '../services/contracts'
+import { createAndDownloadContract, downloadBlankOfficialContract, renderContractPdf } from '../services/contracts'
 import { listClients, listProperties } from '../services/records'
 import { getTemplatePdfBytes, listTemplates } from '../services/templates'
 import { formatTemplateValue, getFieldGroup, getFieldLabel, getFieldType, extractPlaceholders, renderTemplate } from '../lib/placeholders'
 import { formatCurrency, formatDocument, formatPhone, formatPostalCode, formatPropertyAddress, validateContractFields } from '../utils/format'
+import { OFFICIAL_DOCX_FIELDS, OFFICIAL_DOCX_ID } from '../data/officialDocxTemplate'
 import type { Client, ContractRecord, ContractTemplate, Property } from '../types/domain'
 
-const sectionOrder = ['Locador', 'Locatário', 'Imóvel', 'Valores', 'Vigência', 'Observações', 'Informações adicionais']
+const sectionOrder = ['Locador', 'Locatário', 'Vendedor', 'Comprador', 'Partes adicionais', 'Imóvel', 'Imóvel e situação', 'Valores', 'Pagamento', 'Penalidades', 'Prazos', 'Vigência', 'Imobiliária e corretagem', 'Assinaturas', 'Observações', 'Informações adicionais']
 
 export function NewContractPage() {
   const { user } = useAuth()
@@ -31,6 +32,9 @@ export function NewContractPage() {
   const [pdfPreview, setPdfPreview] = useState<{ key: string; url?: string; error?: string } | null>(null)
   const [clientEditorOpen, setClientEditorOpen] = useState(false)
   const [propertyEditorOpen, setPropertyEditorOpen] = useState(false)
+  const [activeGroupIndex, setActiveGroupIndex] = useState(0)
+  const [previewStatus, setPreviewStatus] = useState('Preparando prévia...')
+  const previewHostRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let active = true
@@ -55,9 +59,12 @@ export function NewContractPage() {
   }, [])
 
   const template = templates.find((item) => item.id === templateId)
-  const fields = useMemo(() => template
-    ? template.pdfFields?.length ? [...new Set(template.pdfFields.map((field) => field.key))] : extractPlaceholders(template.content)
-    : [], [template])
+  const fields = useMemo(() => {
+    if (!template) return []
+    if (template.id === OFFICIAL_DOCX_ID) return [...OFFICIAL_DOCX_FIELDS]
+    if (template.pdfFields?.length) return [...new Set(template.pdfFields.map((field) => field.key))]
+    return extractPlaceholders(template.content)
+  }, [template])
   const fieldLabels = useMemo(() => new Map(template?.pdfFields?.map((field) => [field.key, field.label]) ?? []), [template])
   const groupedFields = useMemo(() => {
     const groups = new Map<string, string[]>()
@@ -65,10 +72,16 @@ export function NewContractPage() {
       const group = getFieldGroup(field)
       groups.set(group, [...(groups.get(group) ?? []), field])
     }
-    return [...groups.entries()].sort(([left], [right]) => sectionOrder.indexOf(left) - sectionOrder.indexOf(right))
+    return [...groups.entries()].sort(([left], [right]) => {
+      const leftOrder = sectionOrder.indexOf(left)
+      const rightOrder = sectionOrder.indexOf(right)
+      return (leftOrder < 0 ? sectionOrder.length : leftOrder) - (rightOrder < 0 ? sectionOrder.length : rightOrder)
+    })
   }, [fields])
   const renderedContent = template ? renderTemplate(template.content, Object.fromEntries(fields.map((field) => [field, formatTemplateValue(field, values[field] ?? '')]))) : ''
-  const missingCount = fields.filter((field) => !values[field]?.trim()).length
+  const missingCount = fields.filter((field) => !field.startsWith('opcional_') && !values[field]?.trim()).length
+  const currentGroup = groupedFields[activeGroupIndex]
+  const currentGroupMissing = currentGroup?.[1].filter((field) => !field.startsWith('opcional_') && !values[field]?.trim()).length ?? 0
   const previewKey = template ? `${template.id}:${template.versionId ?? template.version}:${JSON.stringify(values)}` : ''
 
   useEffect(() => {
@@ -103,6 +116,7 @@ export function NewContractPage() {
 
   function selectTemplate(id: string) {
     setTemplateId(id)
+    setActiveGroupIndex(0)
     setValues({})
     setValidationError('')
     setSuccess('')
@@ -130,6 +144,12 @@ export function NewContractPage() {
       ...(fields.includes('locatario_cpf') ? { locatario_cpf: client.document } : {}),
       ...(fields.includes('locatario_telefone') ? { locatario_telefone: client.phone } : {}),
       ...(fields.includes('locatario_email') ? { locatario_email: client.email } : {}),
+      ...(fields.includes('comprador_nome') ? { comprador_nome: client.name } : {}),
+      ...(fields.includes('comprador_cpf') ? { comprador_cpf: client.document } : {}),
+      ...(fields.includes('comprador_telefone') ? { comprador_telefone: client.phone } : {}),
+      ...(fields.includes('comprador_email') ? { comprador_email: client.email } : {}),
+      ...(fields.includes('comprador_endereco') ? { comprador_endereco: client.address } : {}),
+      ...(fields.includes('comprador_cidade') ? { comprador_cidade: client.address.split(',')[0]?.trim() ?? '' } : {}),
     }))
   }
 
@@ -169,13 +189,78 @@ export function NewContractPage() {
         renderedContent,
         userId: user?.id ?? '',
       })
-      setSuccess(`PDF ${result.fileName} gerado e baixado.`)
+      setSuccess(`${template.id === OFFICIAL_DOCX_ID ? 'Word' : 'PDF'} ${result.fileName} gerado e baixado.`)
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : 'Não foi possível gerar o PDF. Tente novamente.')
     } finally {
       setBusy(false)
     }
   }
+
+  async function downloadBlankTemplate() {
+    setValidationError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await downloadBlankOfficialContract()
+      setSuccess('Modelo Word em branco baixado. Preencha as linhas diretamente no Word.')
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : 'Não foi possível baixar o modelo em branco.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (template?.id !== OFFICIAL_DOCX_ID || !previewHostRef.current) return
+    let active = true
+    let resizeObserver: ResizeObserver | undefined
+    const host = previewHostRef.current
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setPreviewStatus('Atualizando prévia...')
+        const blank = '________________________'
+        const previewValues = Object.fromEntries(OFFICIAL_DOCX_FIELDS.map((field) => [field, values[field]?.trim() || blank]))
+        try {
+          const [{ renderAsync }, { createOfficialDocx }] = await Promise.all([
+            import('docx-preview'),
+            import('../data/officialDocxTemplate'),
+          ])
+          const docxBlob = await createOfficialDocx(previewValues)
+          if (!active) return
+          const pageMount = document.createElement('div')
+          const styleMount = document.createElement('div')
+          await renderAsync(docxBlob, pageMount, styleMount, {
+            className: 'miellis-docx-preview',
+            ignoreWidth: false,
+            ignoreHeight: true,
+            breakPages: true,
+            renderHeaders: true,
+            renderFooters: true,
+          })
+          if (!active) return
+          host.replaceChildren(styleMount, pageMount)
+          const fitPage = () => {
+            const firstPage = pageMount.querySelector<HTMLElement>('.miellis-docx-preview')
+            if (!firstPage) return
+            const scale = Math.min(1, (host.clientWidth - 26) / firstPage.offsetWidth)
+            pageMount.style.setProperty('--docx-preview-zoom', String(scale))
+          }
+          fitPage()
+          resizeObserver = new ResizeObserver(fitPage)
+          resizeObserver.observe(host)
+          setPreviewStatus('Prévia atualizada')
+        } catch {
+          if (active) setPreviewStatus('Não foi possível renderizar a prévia. O Word original continua disponível para download.')
+        }
+      })()
+    }, 450)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+      resizeObserver?.disconnect()
+    }
+  }, [template?.id, values])
 
   if (loading) return <div className="route-loading" role="status">Carregando dados do contrato...</div>
 
@@ -205,6 +290,7 @@ export function NewContractPage() {
               </select>
             </label>
             {template?.demonstration && <div className="template-demo-alert"><Info size={15} /><span>Este modelo é apenas uma demonstração técnica. Não contém cláusulas jurídicas e não deve ser assinado.</span></div>}
+            {template?.id === OFFICIAL_DOCX_ID && <div className="template-demo-alert"><Info size={15} /><div><span>Escolha como quer preencher: use o formulário organizado por etapas ou baixe uma cópia em branco para preencher direto no Word. O layout original da Miellis é mantido.</span><button className="outline-button blank-template-button" type="button" onClick={() => void downloadBlankTemplate()} disabled={busy}><Download size={14} />Baixar Word em branco</button></div></div>}
 
             <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">02 · REFERÊNCIAS</span><h2>Cliente e imóvel</h2></div></div>
             <div className="reference-grid">
@@ -223,17 +309,31 @@ export function NewContractPage() {
             </div>
             {(clients.length === 0 || properties.length === 0) && <p className="empty-reference-note">Cadastre clientes e imóveis antes de gerar documentos reais.</p>}
 
-            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">03 · CAMPOS DO MODELO</span><h2>Dados do contrato</h2></div><span className="field-count">{fields.length} campos</span></div>
-            {groupedFields.map(([group, groupFields]) => (
-              <fieldset className="dynamic-fieldset" key={group}>
-                <legend>{group}</legend>
+            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">03 · PREENCHIMENTO GUIADO</span><h2>Dados da venda</h2></div><span className="field-count">{activeGroupIndex + 1} de {groupedFields.length} etapas</span></div>
+            <div className="field-stepper" aria-label="Etapas dos dados do contrato">
+              {groupedFields.map(([group, groupFields], index) => {
+                const pending = groupFields.filter((field) => !field.startsWith('opcional_') && !values[field]?.trim()).length
+                return <button className={`field-step${activeGroupIndex === index ? ' field-step-active' : ''}${pending === 0 ? ' field-step-complete' : ''}`} type="button" key={group} onClick={() => setActiveGroupIndex(index)} aria-current={activeGroupIndex === index ? 'step' : undefined}>
+                  <span>{pending === 0 ? <Check size={12} /> : index + 1}</span><span>{group}</span>
+                </button>
+              })}
+            </div>
+            {currentGroup && (
+              <fieldset className="dynamic-fieldset current-fieldset" key={currentGroup[0]}>
+                <legend>{currentGroup[0]}</legend>
                 <div className="dynamic-field-grid">
-                  {groupFields.map((field) => {
+                  {currentGroup[1].map((field) => {
                     const kind = getFieldType(field)
                     return (
-                      <label className={`editor-field${kind === 'text' && field.endsWith('_nome') || field.endsWith('_endereco') || field === 'observacoes' ? ' field-wide' : ''}`} key={field}>
-                        {fieldLabels.get(field) ?? getFieldLabel(field)}<span className="required-star">*</span>
-                        <span className={`dynamic-input${kind === 'currency' ? ' currency-input' : ''}`}>
+                      <label className={`editor-field${kind === 'textarea' || field.endsWith('_nome') || field.endsWith('_endereco') || field === 'observacoes' ? ' field-wide' : ''}`} key={field}>
+                        {fieldLabels.get(field) ?? getFieldLabel(field)}{!field.startsWith('opcional_') && <span className="required-star">*</span>}
+                        {kind === 'textarea' ? <textarea
+                          rows={field.includes('descricao') || field.includes('situacao_') ? 4 : 2}
+                          value={values[field] ?? ''}
+                          onChange={(event) => updateValue(field, event.target.value)}
+                          placeholder={fieldLabels.get(field) ?? getFieldLabel(field)}
+                          required={!field.startsWith('opcional_')}
+                        /> : <span className={`dynamic-input${kind === 'currency' ? ' currency-input' : ''}`}>
                           {kind === 'currency' && <span>R$</span>}
                           <input
                             type={kind === 'date' ? 'date' : kind === 'tel' ? 'tel' : 'text'}
@@ -241,29 +341,34 @@ export function NewContractPage() {
                             value={values[field] ?? ''}
                             onChange={(event) => updateValue(field, event.target.value)}
                             placeholder={kind === 'currency' ? '0,00' : kind === 'date' ? 'dd/mm/aaaa' : getFieldLabel(field)}
-                            required
+                            required={!field.startsWith('opcional_')}
                           />
-                        </span>
-                        <span className="field-technical-name">{`{{${field}}}`}</span>
+                        </span>}
                       </label>
                     )
                   })}
                 </div>
               </fieldset>
-            ))}
+            )}
+            {groupedFields.length > 1 && <div className="field-step-actions"><button className="outline-button" type="button" disabled={activeGroupIndex === 0} onClick={() => setActiveGroupIndex((index) => Math.max(0, index - 1))}><ArrowLeft size={14} />Anterior</button><span>{currentGroupMissing ? `${currentGroupMissing} para preencher nesta etapa` : 'Etapa preenchida'}</span><button className="outline-button" type="button" disabled={activeGroupIndex >= groupedFields.length - 1} onClick={() => setActiveGroupIndex((index) => Math.min(groupedFields.length - 1, index + 1))}>Próxima<ArrowRight size={14} /></button></div>}
             {fields.length === 0 && <p className="empty-reference-note">Este modelo não possui campos entre chaves no formato {'{{campo}}'}.</p>}
             {validationError && <div className="inline-alert" role="alert"><AlertCircle size={15} />{validationError}</div>}
             {success && <div className="success-alert" role="status"><Check size={15} />{success}</div>}
             <div className="editor-actions">
               <span>{missingCount > 0 ? `${missingCount} campos pendentes` : 'Campos preenchidos'}</span>
-              <button className="gold-button" type="button" onClick={() => void generate()} disabled={busy || !template || clients.length === 0 || properties.length === 0}>
+              <button className="gold-button" type="button" onClick={() => void generate()} disabled={busy || !template || (template.id !== OFFICIAL_DOCX_ID && (clients.length === 0 || properties.length === 0))}>
                 {busy ? <LoaderCircle className="spin-icon" size={16} /> : <FileText size={16} />}
-                {busy ? 'Gerando PDF...' : 'Gerar PDF'}
+                {busy ? 'Gerando documento...' : template?.id === OFFICIAL_DOCX_ID ? 'Gerar Word original' : 'Gerar PDF'}
               </button>
             </div>
           </section>
 
-          <section className="preview-panel" aria-label="Pré-visualização do contrato">
+          {template?.id === OFFICIAL_DOCX_ID ? <section className="preview-panel live-docx-preview-panel" aria-label="Pré-visualização ao vivo do contrato original">
+            <div className="preview-panel-head"><div><span className="section-overline">PRÉVIA AO VIVO</span><h2>{template.name}</h2></div><span className="paper-size">DOCX original</span></div>
+            <div className="docx-preview-status" role="status"><LoaderCircle className={previewStatus.includes('...') ? 'spin-icon' : ''} size={13} />{previewStatus}</div>
+            <div className="docx-preview-host" ref={previewHostRef} aria-live="polite" />
+            <p className="preview-footnote">A prévia mostra o documento original com os dados preenchidos e linhas nos campos ainda vazios. A paginação final pode variar no Microsoft Word.</p>
+          </section> : <section className="preview-panel" aria-label="Pré-visualização do contrato">
             <div className="preview-panel-head"><div><span className="section-overline">PRÉVIA AO VIVO</span><h2>{template?.name ?? 'Documento'}</h2></div><span className="paper-size">A4 · v{template?.version}</span></div>
             {template?.sourcePdfPath || template?.sourcePdfData
               ? pdfPreview?.key === previewKey && pdfPreview.url
@@ -276,7 +381,7 @@ export function NewContractPage() {
               <pre>{renderedContent || 'Selecione um modelo para visualizar seu conteúdo.'}</pre>
               </article>}
             <p className="preview-footnote">{template?.sourcePdfPath || template?.sourcePdfData ? 'O PDF mantém a identidade visual original; os campos são substituídos nos locais marcados.' : 'A prévia preserva o texto do modelo. Somente placeholders são substituídos pelos dados informados.'}</p>
-          </section>
+          </section>}
         </div>
       )}
       {clientEditorOpen && <ClientEditor onClose={() => setClientEditorOpen(false)} onSaved={(client) => {

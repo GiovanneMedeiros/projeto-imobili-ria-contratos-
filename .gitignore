@@ -7,3 +7,5 @@ coverage
 *.local
 .DS_Store
 tmp/
+modelos-oficiais/*.pdf
+modelos-oficiais/contrato miellis.docx

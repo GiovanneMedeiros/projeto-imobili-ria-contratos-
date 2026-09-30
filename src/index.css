@@ -160,6 +160,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .dynamic-fieldset { min-width: 0; margin: 16px 0 0; padding: 0; border: 0; }
 .dynamic-fieldset legend { width: 100%; padding: 0 0 9px; border-bottom: 1px solid #302f29; color: #ded9ce; font-size: 12px; font-weight: 600; }
 .dynamic-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.dynamic-field-grid .editor-field textarea { min-height: 78px; padding: 9px; }
+.field-stepper { display: flex; gap: 6px; overflow-x: auto; margin: 14px 0 7px; padding: 2px 0 8px; scrollbar-color: #514b3c transparent; }
+.field-step { display: inline-flex; min-height: 31px; flex: 0 0 auto; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid #39372f; border-radius: 3px; color: #aaa497; background: #141413; font-size: 10px; cursor: pointer; }
+.field-step > span:first-child { display: grid; width: 17px; height: 17px; place-items: center; border: 1px solid #575144; border-radius: 50%; font-size: 9px; }
+.field-step-active { border-color: var(--gold); color: #eee5cf; background: #262218; }
+.field-step-active > span:first-child { border-color: var(--gold); color: var(--gold); }
+.field-step-complete:not(.field-step-active) > span:first-child { border-color: #697354; color: #b9c99a; }
+.current-fieldset { min-height: 135px; }
+.field-step-actions { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; padding-top: 10px; border-top: 1px solid #302f29; color: #9e998c; font-size: 10px; }
+.field-step-actions .outline-button { min-height: 31px; gap: 6px; padding: 0 9px; font-size: 10px; }
+.template-demo-alert > div { display: grid; justify-items: start; gap: 8px; }
+.blank-template-button { min-height: 31px; gap: 6px; padding: 0 9px; color: #e2d6b9; font-size: 10px; }
+.blank-template-button:disabled { cursor: wait; opacity: .6; }
 .required-star { margin-left: 4px; color: var(--gold); }
 .field-wide { grid-column: 1 / -1; }
 .dynamic-input { position: relative; display: flex; align-items: center; }
@@ -175,6 +188,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .spin-icon { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .preview-panel { position: sticky; top: 72px; padding: 15px; }
+.live-docx-preview-panel { max-height: calc(100vh - 88px); display: flex; flex-direction: column; overflow: hidden; }
+.docx-preview-status { display: flex; min-height: 24px; align-items: center; gap: 7px; margin: -5px 0 8px; color: #a8a294; font-size: 10px; }
+.docx-preview-status svg { flex: 0 0 auto; color: var(--gold); }
+.docx-preview-host { min-height: 230px; flex: 1; max-height: calc(100vh - 220px); overflow: auto; border: 1px solid #3b3931; border-radius: 2px; background: #24231f; }
+.docx-preview-host > div:last-child { zoom: var(--docx-preview-zoom, .5); }
+.docx-preview-host .docx-wrapper { padding: 12px 8px !important; background: #24231f !important; }
+.docx-preview-host .docx { margin: 0 auto 12px !important; box-shadow: 0 3px 12px #0008; }
+.docx-preview-host .docx table { max-width: 100%; }
 .preview-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 13px; }
 .preview-panel-head h2 { font-size: 14px; }
 .paper-size { padding: 4px 6px; border: 1px solid #3b3931; border-radius: 3px; color: #aaa496; font-size: 9px; }
@@ -325,7 +346,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .page-container { padding-right: 22px; padding-left: 22px; }
   .data-table { min-width: 790px; }
-  .contract-editor-grid { grid-template-columns: minmax(370px, .95fr) minmax(330px, 1.05fr); gap: 12px; }
+  .contract-editor-grid { grid-template-columns: minmax(0, 1fr) minmax(260px, .9fr); gap: 12px; }
   .contract-form-panel { padding: 14px; }
   .template-editor-layout { grid-template-columns: minmax(360px, 1fr) minmax(330px, 1fr); gap: 12px; }
   .report-layout { grid-template-columns: 1fr; }

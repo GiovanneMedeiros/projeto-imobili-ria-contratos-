@@ -416,3 +416,30 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .report-card { min-height: 92px; padding: 12px; }
   .chart-bars { gap: 5px; }
 }
+/* Leitura automática de documentos */
+.doc-import { margin-top: 13px; }
+.doc-import-intro { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 4px; color: #9a9589; font-size: 11px; line-height: 1.5; }
+.doc-import-intro svg { flex: 0 0 auto; margin-top: 1px; color: var(--gold); }
+.doc-import-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 13px; }
+.doc-import-progress { display: inline-flex; align-items: center; gap: 7px; color: #e3d0a6; font-size: 11px; }
+.doc-import-files { display: grid; gap: 5px; margin: 13px 0 0; padding: 0; list-style: none; font-size: 11px; color: #c4c0b5; }
+.doc-import-files li { display: flex; gap: 7px; align-items: flex-start; }
+.doc-import-files svg { flex: 0 0 auto; margin-top: 1px; color: var(--gold); }
+.doc-import-file-error { color: #e7b2a3; }
+.doc-import-file-error svg { color: #e7b2a3; }
+.doc-import-owners, .doc-import-extras { display: grid; gap: 7px; margin-top: 13px; padding: 11px; border: 1px solid #3a3932; border-radius: 3px; color: #c4c0b5; font-size: 11px; }
+.doc-import-owner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.doc-import-extras ul { margin: 0; padding-left: 16px; }
+.doc-import-extras span { color: #eeeae0; }
+.doc-import-review { margin-top: 16px; }
+.doc-import-review h3 { margin: 0 0 6px; color: #eeeae0; font-size: 13px; }
+.doc-import-hint { margin: 0 0 10px; color: #9a9589; font-size: 10px; line-height: 1.9; }
+.doc-import-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.conf-badge { padding: 1px 6px; border-radius: 9px; font-size: 9px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+.conf-low { color: #e9cf95; background: #3a301c; }
+.conf-high { color: #b5e3b8; background: #1d3320; }
+.conf-edited { color: #c9d6f0; background: #1f2838; }
+.conf-empty { color: #e7b2a3; background: #3a221c; }
+.doc-import-review .editor-field textarea { min-height: 110px; }
+.doc-import-apply { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 13px; }
+.doc-import-overwrite { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; color: #c4c0b5; font-size: 11px; }

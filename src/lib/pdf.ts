@@ -22,11 +22,11 @@ export async function getPdfPageCount(file: File) {
   return pdf.numPages
 }
 
-export async function renderPdfPageToCanvas(file: File, canvas: HTMLCanvasElement, pageNumber = 1) {
+export async function renderPdfPageToCanvas(file: File, canvas: HTMLCanvasElement, pageNumber = 1, scale = 1.3) {
   const buffer = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
   const page = await pdf.getPage(pageNumber)
-  const viewport = page.getViewport({ scale: 1.3 })
+  const viewport = page.getViewport({ scale })
 
   canvas.width = viewport.width
   canvas.height = viewport.height

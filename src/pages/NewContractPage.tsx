@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { ClientEditor, PropertyEditor } from './RecordsPages'
+import { DocumentImportPanel } from '../components/DocumentImportPanel'
 import { createAndDownloadContract, downloadBlankOfficialContract, renderContractPdf } from '../services/contracts'
 import { listClients, listProperties } from '../services/records'
 import { getTemplatePdfBytes, listTemplates } from '../services/templates'
@@ -132,6 +133,16 @@ export function NewContractPage() {
     setValues((current) => ({ ...current, [key]: value }))
     setValidationError('')
     setSuccess('')
+  }
+
+  function applyExtractedValues(extracted: Record<string, string>, overwrite: boolean) {
+    let applied = 0
+    for (const [key, value] of Object.entries(extracted)) {
+      if (!fields.includes(key) || (!overwrite && values[key]?.trim())) continue
+      updateValue(key, value)
+      applied += 1
+    }
+    return applied
   }
 
   function selectClient(id: string) {
@@ -309,7 +320,12 @@ export function NewContractPage() {
             </div>
             {(clients.length === 0 || properties.length === 0) && <p className="empty-reference-note">Cadastre clientes e imóveis antes de gerar documentos reais.</p>}
 
-            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">03 · PREENCHIMENTO GUIADO</span><h2>Dados da venda</h2></div><span className="field-count">{activeGroupIndex + 1} de {groupedFields.length} etapas</span></div>
+            {fields.length > 0 && <>
+              <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">03 · LEITURA AUTOMÁTICA (OPCIONAL)</span><h2>Documentos</h2></div></div>
+              <DocumentImportPanel key={templateId} fields={fields} values={values} onApply={applyExtractedValues} />
+            </>}
+
+            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">04 · PREENCHIMENTO GUIADO</span><h2>Dados da venda</h2></div><span className="field-count">{activeGroupIndex + 1} de {groupedFields.length} etapas</span></div>
             <div className="field-stepper" aria-label="Etapas dos dados do contrato">
               {groupedFields.map(([group, groupFields], index) => {
                 const pending = groupFields.filter((field) => !field.startsWith('opcional_') && !values[field]?.trim()).length

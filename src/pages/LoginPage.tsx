@@ -28,7 +28,7 @@ export function LoginPage() {
   return (
     <main className="login-layout">
       <section className="login-brand-panel" aria-label="Imobiliária Miellis">
-        <div className="login-brand-top"><img src="/miellis-logo.png" alt="Imobiliária Miellis" /></div>
+        <div className="login-brand-top"><img src={`${import.meta.env.BASE_URL}miellis-logo.png`} alt="Imobiliária Miellis" /></div>
         <div className="login-brand-copy">
           <span className="gold-rule" />
           <span className="login-overline">PLATAFORMA INTERNA</span>
@@ -40,7 +40,7 @@ export function LoginPage() {
 
       <section className="login-form-panel">
         <div className="login-form-wrap">
-          <span className="login-mobile-brand"><img src="/miellis-logo.png" alt="Imobiliária Miellis" /></span>
+          <span className="login-mobile-brand"><img src={`${import.meta.env.BASE_URL}miellis-logo.png`} alt="Imobiliária Miellis" /></span>
           <span className="section-overline">ACESSO RESTRITO</span>
           <h2>Boas-vindas</h2>
           <p className="login-subtitle">Entre com suas credenciais corporativas.</p>

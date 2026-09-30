@@ -18,7 +18,7 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <NavLink className="sidebar-brand" to="/dashboard" aria-label="Miellis, dashboard">
-        <img src="/miellis-logo.png" alt="Imobiliária Miellis" />
+        <img src={`${import.meta.env.BASE_URL}miellis-logo.png`} alt="Imobiliária Miellis" />
       </NavLink>
       <div className="sidebar-caption">GESTÃO INTERNA</div>
       <nav className="side-nav" aria-label="Navegação principal">

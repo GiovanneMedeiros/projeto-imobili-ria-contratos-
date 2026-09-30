@@ -1,5 +1,5 @@
 import PizZip from 'pizzip'
-const docxUrl = '/miellis-contract-template.docx'
+const docxUrl = `${import.meta.env.BASE_URL}miellis-contract-template.docx`
 
 export const OFFICIAL_DOCX_ID = 'miellis-official-sale-promise'
 

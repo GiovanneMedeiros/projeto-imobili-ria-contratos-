@@ -1,14 +1,14 @@
 const placeholderPattern = /{{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*}}/g
 
 const fieldLabels: Record<string, string> = {
-  locador_nome: 'Nome completo',
-  locador_cpf: 'CPF/CNPJ',
-  locador_telefone: 'Telefone',
-  locador_email: 'E-mail',
-  locatario_nome: 'Nome completo',
-  locatario_cpf: 'CPF/CNPJ',
-  locatario_telefone: 'Telefone',
-  locatario_email: 'E-mail',
+  locador_nome: 'Nome do locador',
+  locador_cpf: 'CPF/CNPJ do locador',
+  locador_telefone: 'Telefone do locador',
+  locador_email: 'E-mail do locador',
+  locatario_nome: 'Nome do locatário',
+  locatario_cpf: 'CPF/CNPJ do locatário',
+  locatario_telefone: 'Telefone do locatário',
+  locatario_email: 'E-mail do locatário',
   imovel_endereco: 'Endereço completo',
   imovel_numero: 'Número',
   imovel_complemento: 'Complemento',

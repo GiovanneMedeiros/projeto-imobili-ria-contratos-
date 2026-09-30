@@ -1,11 +1,16 @@
 import { createElement } from 'react'
 import { DEMO_CONTRACTS, DEMO_TEMPLATE } from '../data/demo'
+import { fillPdfFields, fillPdfPlaceholders } from '../lib/pdf'
+import { extractPlaceholders, formatTemplateValue } from '../lib/placeholders'
+import { getTemplatePdfBytes, listTemplates } from './templates'
 import { listClients, listProperties } from './records'
 import { formatPropertyAddress } from '../utils/format'
 import { demoMode, supabase } from '../lib/supabase'
-import type { ContractRecord, ContractTemplate } from '../types/domain'
+import { CONTRACT_STATUS_LABELS } from '../types/domain'
+import type { ContractDraft, ContractRecord, ContractReviewIssue, ContractStatusDisplay, ContractStatusValue, ContractTemplate } from '../types/domain'
 
 const DEMO_HISTORY_KEY = 'miellis-demo-generated-contracts-v1'
+const DEMO_DRAFTS_KEY = 'miellis-demo-contract-drafts-v1'
 
 interface SavedDemoContract {
   id: string
@@ -28,13 +33,189 @@ export interface CreateContractInput {
   userId: string
 }
 
-export async function createAndDownloadContract(input: CreateContractInput) {
+export function getContractStatusLabel(status: ContractStatusValue): ContractStatusDisplay {
+  return CONTRACT_STATUS_LABELS[status]
+}
+
+// Converte o status salvo no banco (inclui estados técnicos como 'generating' e 'pdf_failed') para o rótulo exibido.
+export function getContractRecordStatus(status: string): ContractStatusDisplay {
+  if (status === 'review') return 'Em revisão'
+  return status in CONTRACT_STATUS_LABELS ? CONTRACT_STATUS_LABELS[status as ContractStatusValue] : 'Gerado'
+}
+
+export function getContractStatusClass(status: ContractStatusValue): string {
+  const classes: Record<ContractStatusValue, string> = {
+    draft: 'status-review',
+    in_review: 'status-review',
+    pending_approval: 'status-generated',
+    approved: 'status-generated',
+    generated: 'status-generated',
+    pending_signature: 'status-generated',
+    signed: 'status-signed',
+    cancelled: 'status-inactive',
+  }
+  return classes[status]
+}
+
+export function getMissingContractPlaceholders(template: ContractTemplate, values: Record<string, string>) {
+  const placeholders = extractPlaceholders(template.content)
+  return placeholders.filter((field) => !String(values[field] ?? '').trim())
+}
+
+export function getContractReviewIssues(template: ContractTemplate, values: Record<string, string>, clientId: string, propertyId: string): ContractReviewIssue[] {
+  const issues: ContractReviewIssue[] = []
+  const placeholders = getMissingContractPlaceholders(template, values)
+  placeholders.forEach((field) => {
+    issues.push({ id: `placeholder-${field}`, message: `Campo obrigatório não preenchido: ${field}`, severity: 'error', field })
+  })
+
+  if (!clientId) issues.push({ id: 'client-missing', message: 'Cliente não selecionado.', severity: 'error', step: 'cliente' })
+  if (!propertyId) issues.push({ id: 'property-missing', message: 'Imóvel não selecionado.', severity: 'error', step: 'imovel' })
+
+  const required = extractPlaceholders(template.content)
+  if (required.length === 0 && !template.pdfFields?.length) {
+    issues.push({ id: 'template-empty', message: 'O template não possui placeholders nem campos PDF configurados.', severity: 'error', step: 'modelo' })
+  }
+
+  return issues
+}
+
+export async function loadContractDrafts(): Promise<ContractDraft[]> {
+  if (demoMode) {
+    try {
+      return JSON.parse(localStorage.getItem(DEMO_DRAFTS_KEY) ?? '[]') as ContractDraft[]
+    } catch {
+      return []
+    }
+  }
+
+  if (!supabase) return []
+  const { data, error } = await supabase.from('contract_drafts').select(DRAFT_COLUMNS).order('updated_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapDraftRow)
+}
+
+const DRAFT_COLUMNS = 'id, title, template_id, client_id, property_id, fields, user_id, status, percent_complete, created_at, updated_at, contract_templates(name), clients(name), properties(address, number, complement, neighborhood)'
+
+interface DraftRow {
+  id: string
+  title: string
+  template_id: string | null
+  client_id: string | null
+  property_id: string | null
+  fields: unknown
+  user_id: string
+  status: string
+  percent_complete: number | string
+  created_at: string
+  updated_at: string
+  contract_templates: unknown
+  clients: unknown
+  properties: unknown
+}
+
+function getRelationName(relation: unknown) {
+  const value = Array.isArray(relation) ? relation[0] : relation
+  return value && typeof value === 'object' && 'name' in value ? String(value.name) : undefined
+}
+
+function mapDraftRow(row: DraftRow): ContractDraft {
+  return {
+    id: row.id,
+    title: row.title,
+    templateId: row.template_id ?? '',
+    clientId: row.client_id ?? '',
+    propertyId: row.property_id ?? '',
+    values: (row.fields ?? {}) as Record<string, string>,
+    userId: row.user_id,
+    status: row.status in CONTRACT_STATUS_LABELS ? row.status as ContractStatusValue : 'draft',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    percentComplete: Number(row.percent_complete),
+    templateName: getRelationName(row.contract_templates),
+    clientName: getRelationName(row.clients),
+    propertyAddress: row.properties ? getPropertyAddress(row.properties) : undefined,
+  }
+}
+
+export async function saveContractDraft(draft: ContractDraft) {
+  const entry: ContractDraft = {
+    ...draft,
+    updatedAt: new Date().toISOString(),
+    percentComplete: Math.max(0, Math.min(100, draft.percentComplete ?? 0)),
+  }
+
+  if (demoMode) {
+    const saved = JSON.parse(localStorage.getItem(DEMO_DRAFTS_KEY) ?? '[]') as ContractDraft[]
+    const next = saved.filter((item) => item.id !== entry.id)
+    next.unshift(entry)
+    localStorage.setItem(DEMO_DRAFTS_KEY, JSON.stringify(next))
+    return entry
+  }
+
+  if (!supabase) throw new Error('Configure o Supabase antes de salvar rascunhos.')
+
+  const { data, error } = await supabase.from('contract_drafts').upsert({
+    id: entry.id,
+    title: entry.title,
+    template_id: entry.templateId || null,
+    client_id: entry.clientId || null,
+    property_id: entry.propertyId || null,
+    fields: entry.values,
+    user_id: entry.userId,
+    status: entry.status,
+    percent_complete: entry.percentComplete,
+    created_at: entry.createdAt,
+  }, { onConflict: 'id' }).select(DRAFT_COLUMNS).single()
+  if (error) throw error
+  return mapDraftRow(data)
+}
+
+export async function getContractDraft(id: string): Promise<ContractDraft | null> {
+  if (demoMode || !supabase) {
+    const drafts = await loadContractDrafts()
+    return drafts.find((draft) => draft.id === id) ?? null
+  }
+  const { data, error } = await supabase.from('contract_drafts').select(DRAFT_COLUMNS).eq('id', id).maybeSingle()
+  if (error) throw error
+  return data ? mapDraftRow(data) : null
+}
+
+export async function deleteContractDraft(id: string) {
+  if (demoMode) {
+    const saved = JSON.parse(localStorage.getItem(DEMO_DRAFTS_KEY) ?? '[]') as ContractDraft[]
+    localStorage.setItem(DEMO_DRAFTS_KEY, JSON.stringify(saved.filter((draft) => draft.id !== id)))
+    return
+  }
+
+  if (!supabase) return
+  const { error } = await supabase.from('contract_drafts').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function renderContractPdf(input: Pick<CreateContractInput, 'template' | 'values' | 'renderedContent'>) {
+  if (input.template.sourcePdfPath || input.template.sourcePdfData) {
+    const source = await getTemplatePdfBytes(input.template)
+    const fieldKeys = input.template.pdfFields?.length
+      ? [...new Set(input.template.pdfFields.map((field) => field.key))]
+      : extractPlaceholders(input.template.content)
+    const values = Object.fromEntries(fieldKeys.map((key) => [key, formatTemplateValue(key, input.values[key] ?? '')]))
+    const output = input.template.pdfFields?.length
+      ? await fillPdfFields(source, input.template.pdfFields, values)
+      : await fillPdfPlaceholders(source, values)
+    const buffer = output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer
+    return new Blob([buffer], { type: 'application/pdf' })
+  }
   const [{ pdf }, { ContractPdfDocument }] = await Promise.all([
     import('@react-pdf/renderer'),
     import('../components/ContractPdf'),
   ])
+  return pdf(createElement(ContractPdfDocument, { title: input.template.name, content: input.renderedContent })).toBlob()
+}
+
+export async function createAndDownloadContract(input: CreateContractInput) {
   const safeName = input.template.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
-  const blob = await pdf(createElement(ContractPdfDocument, { title: input.template.name, content: input.renderedContent })).toBlob()
+  const blob = await renderContractPdf(input)
   const fileName = `contrato-${safeName}-${new Date().toISOString().slice(0, 10)}.pdf`
 
   if (demoMode) {
@@ -131,7 +312,7 @@ export async function listContracts() {
     propertyAddress: getPropertyAddress(row.properties),
     createdBy: (row.profiles as { full_name?: string } | null)?.full_name ?? 'Equipe Miellis',
     createdAt: row.created_at,
-    status: row.status === 'signed' ? 'Assinado' : row.status === 'review' ? 'Em revisão' : 'Gerado',
+    status: getContractRecordStatus(row.status),
     fileName: row.file_name ?? undefined,
     pdfPath: row.pdf_path ?? undefined,
     templateId: row.template_id,
@@ -175,11 +356,8 @@ export async function downloadSavedContract(id: string) {
   if (demoMode) {
     const saved = getSavedDemoContracts().find((item) => item.id === id)
     if (!saved) throw new Error('Este registro demonstrativo não possui um arquivo PDF salvo.')
-    const [{ pdf }, { ContractPdfDocument }] = await Promise.all([
-      import('@react-pdf/renderer'),
-      import('../components/ContractPdf'),
-    ])
-    const blob = await pdf(createElement(ContractPdfDocument, { title: saved.name, content: saved.content })).toBlob()
+    const template = (await listTemplates(true)).find((item) => item.id === saved.templateId) ?? DEMO_TEMPLATE
+    const blob = await renderContractPdf({ template, values: saved.values, renderedContent: saved.content })
     downloadBlob(blob, saved.fileName)
     return
   }

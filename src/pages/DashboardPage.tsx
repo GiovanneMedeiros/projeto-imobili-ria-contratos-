@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DEMO_CONTRACTS, DEMO_DASHBOARD_STATS } from '../data/demo'
 import { demoMode, supabase } from '../lib/supabase'
+import { getContractRecordStatus } from '../services/contracts'
 import type { ContractRecord } from '../types/domain'
 
 interface DashboardData {
@@ -46,7 +47,7 @@ async function loadDashboard(): Promise<DashboardData> {
       propertyAddress: (row.properties as { address?: string } | null)?.address ?? 'Imóvel',
       createdBy: (row.profiles as { full_name?: string } | null)?.full_name ?? 'Equipe Miellis',
       createdAt: row.created_at,
-      status: row.status === 'signed' ? 'Assinado' : row.status === 'review' ? 'Em revisão' : 'Gerado',
+      status: getContractRecordStatus(row.status),
     })),
   }
 }

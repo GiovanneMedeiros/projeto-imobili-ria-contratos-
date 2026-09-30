@@ -1,4 +1,4 @@
-import { Building2, ChartNoAxesCombined, ChevronDown, ClipboardList, FilePlus2, FileText, LayoutDashboard, LogOut, Settings2, UsersRound } from 'lucide-react'
+import { Building2, ChartNoAxesCombined, ChevronDown, ClipboardList, FilePlus2, FileText, LayoutDashboard, LogOut, NotebookPen, Settings2, UsersRound } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 
@@ -7,6 +7,7 @@ const links = [
   { label: 'Imóveis', to: '/imoveis', icon: Building2 },
   { label: 'Clientes', to: '/clientes', icon: UsersRound },
   { label: 'Contratos', to: '/contratos', icon: FileText },
+  { label: 'Rascunhos', to: '/rascunhos', icon: NotebookPen },
   { label: 'Modelos', to: '/modelos', icon: ClipboardList, adminOnly: true },
   { label: 'Relatórios', to: '/relatorios', icon: ChartNoAxesCombined },
   { label: 'Configurações', to: '/configuracoes', icon: Settings2 },

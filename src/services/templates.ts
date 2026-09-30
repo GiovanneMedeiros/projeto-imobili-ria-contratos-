@@ -1,9 +1,10 @@
 import { DEMO_TEMPLATE } from '../data/demo'
 import { extractPlaceholders } from '../lib/placeholders'
 import { demoMode, supabase } from '../lib/supabase'
-import type { ContractTemplate } from '../types/domain'
+import type { ContractTemplate, ContractTemplateField } from '../types/domain'
 
 const DEMO_TEMPLATES_KEY = 'miellis-demo-templates-v1'
+const templatePdfCache = new Map<string, Promise<Uint8Array>>()
 
 function getDemoTemplates(): ContractTemplate[] {
   try {
@@ -14,25 +15,56 @@ function getDemoTemplates(): ContractTemplate[] {
   }
 }
 
+async function encodeDemoPdf(file: File) {
+  if (file.size > 2 * 1024 * 1024) throw new Error('No modo demonstração, importe PDFs de até 2 MB. Configure o Supabase para armazenar arquivos maiores.')
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let encoded = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    encoded += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  }
+  return btoa(encoded)
+}
+
+export async function getTemplatePdfBytes(template: ContractTemplate) {
+  const cacheKey = template.versionId ?? template.id
+  let request = templatePdfCache.get(cacheKey)
+  if (!request) {
+    request = (async () => {
+      if (template.sourcePdfData) {
+        const decoded = atob(template.sourcePdfData)
+        return Uint8Array.from(decoded, (character) => character.charCodeAt(0))
+      }
+      if (!template.sourcePdfPath || !supabase) throw new Error('O PDF original deste modelo não está disponível.')
+      const { data, error } = await supabase.storage.from('contract-template-pdfs').download(template.sourcePdfPath)
+      if (error) throw error
+      return new Uint8Array(await data.arrayBuffer())
+    })()
+    templatePdfCache.set(cacheKey, request)
+    void request.catch(() => templatePdfCache.delete(cacheKey))
+  }
+  return (await request).slice()
+}
+
 export async function listTemplates(includeInactive = false): Promise<ContractTemplate[]> {
   if (demoMode) return getDemoTemplates().filter((template) => includeInactive || template.status === 'active')
   if (!supabase) return []
   let query = supabase
     .from('contract_templates')
-    .select('id, name, type, status, contract_template_versions(id, version, content, created_at)')
+    .select('id, name, type, status, contract_template_versions(id, version, content, source_pdf_path, pdf_fields, created_at)')
     .order('name')
   if (!includeInactive) query = query.eq('status', 'active')
   const { data, error } = await query
   if (error) throw error
   return (data ?? []).flatMap((row) => {
-    const versions = (row.contract_template_versions as { id: string; version: string; content: string; created_at: string }[]).sort((left, right) => right.created_at.localeCompare(left.created_at))
+    const versions = (row.contract_template_versions as { id: string; version: string; content: string; source_pdf_path: string | null; pdf_fields: ContractTemplateField[] | null; created_at: string }[]).sort((left, right) => right.created_at.localeCompare(left.created_at))
     const current = versions[0]
-    return current ? [{ id: row.id, versionId: current.id, name: row.name, type: row.type, status: row.status, version: current.version, content: current.content, demonstration: false, versionHistory: [...versions].reverse().map((version) => ({ id: version.id, version: version.version, content: version.content, createdAt: version.created_at })) }] : []
+    return current ? [{ id: row.id, versionId: current.id, name: row.name, type: row.type, status: row.status, version: current.version, content: current.content, sourcePdfPath: current.source_pdf_path ?? undefined, pdfFields: current.pdf_fields ?? [], demonstration: false, versionHistory: [...versions].reverse().map((version) => ({ id: version.id, version: version.version, content: version.content, sourcePdfPath: version.source_pdf_path ?? undefined, pdfFields: version.pdf_fields ?? [], createdAt: version.created_at })) }] : []
   })
 }
 
-export async function createTemplate(input: { name: string; type: string; content: string }, userId: string) {
+export async function createTemplate(input: { name: string; type: string; content: string; sourcePdf?: File | null; pdfFields?: ContractTemplateField[] }, userId: string) {
   const versionId = crypto.randomUUID()
+  const sourcePdfData = demoMode && input.sourcePdf ? await encodeDemoPdf(input.sourcePdf) : undefined
   const template: ContractTemplate = {
     id: crypto.randomUUID(),
     versionId,
@@ -41,6 +73,8 @@ export async function createTemplate(input: { name: string; type: string; conten
     version: '1.0',
     status: 'active',
     content: input.content,
+    sourcePdfData,
+    pdfFields: input.pdfFields ?? [],
     demonstration: demoMode,
     versionHistory: [{ id: versionId, version: '1.0', content: input.content, createdAt: new Date().toISOString() }],
   }
@@ -60,36 +94,47 @@ export async function createTemplate(input: { name: string; type: string; conten
     .single()
   if (createError) throw createError
 
+  const sourcePdfPath = input.sourcePdf ? `${userId}/${created.id}/${versionId}.pdf` : undefined
+  if (input.sourcePdf && sourcePdfPath) {
+    const { error: uploadError } = await supabase.storage.from('contract-template-pdfs').upload(sourcePdfPath, input.sourcePdf, { contentType: 'application/pdf', upsert: false })
+    if (uploadError) throw uploadError
+  }
+
   const { data: version, error: versionError } = await supabase.from('contract_template_versions').insert({
     template_id: created.id,
     version: template.version,
     content: template.content,
     placeholders: fields,
+    source_pdf_path: sourcePdfPath,
+    pdf_fields: template.pdfFields,
     created_by: userId,
   }).select('id').single()
   if (versionError) throw versionError
   await supabase.from('audit_logs').insert({ user_id: userId, action: 'template.created', entity_type: 'contract_template', entity_id: created.id })
-  return { ...template, id: created.id, versionId: version.id }
+  return { ...template, id: created.id, versionId: version.id, sourcePdfPath }
 }
 
-export async function updateTemplate(templateId: string, input: { name: string; type: string; content: string }, userId: string) {
+export async function updateTemplate(templateId: string, input: { name: string; type: string; content: string; sourcePdf?: File | null; pdfFields?: ContractTemplateField[] }, userId: string) {
   const currentTemplates = await listTemplates(true)
   const current = currentTemplates.find((item) => item.id === templateId)
   if (!current) throw new Error('O modelo selecionado não foi encontrado.')
   const [major, minor] = current.version.split('.').map(Number)
   const nextVersion = `${major}.${minor + 1}`
   const createdAt = new Date().toISOString()
+  const newVersionId = crypto.randomUUID()
 
   if (demoMode) {
-    const newVersionId = crypto.randomUUID()
+    const sourcePdfData = input.sourcePdf ? await encodeDemoPdf(input.sourcePdf) : current.sourcePdfData
     const updated: ContractTemplate = {
       ...current,
       name: input.name.trim(),
       type: input.type.trim(),
       content: input.content,
+      sourcePdfData,
+      pdfFields: input.pdfFields ?? current.pdfFields ?? [],
       version: nextVersion,
       versionId: newVersionId,
-      versionHistory: [...(current.versionHistory ?? []), { id: newVersionId, version: nextVersion, content: input.content, createdAt }],
+      versionHistory: [...(current.versionHistory ?? []), { id: newVersionId, version: nextVersion, content: input.content, sourcePdfPath: current.sourcePdfPath, pdfFields: input.pdfFields ?? current.pdfFields ?? [], createdAt }],
     }
     localStorage.setItem(DEMO_TEMPLATES_KEY, JSON.stringify([...currentTemplates.filter((item) => item.id !== templateId), updated]))
     return updated
@@ -97,10 +142,15 @@ export async function updateTemplate(templateId: string, input: { name: string; 
   if (!supabase) throw new Error('Configure o Supabase antes de editar modelos.')
   const { error: updateError } = await supabase.from('contract_templates').update({ name: input.name.trim(), type: input.type.trim() }).eq('id', templateId)
   if (updateError) throw updateError
-  const { data: version, error: versionError } = await supabase.from('contract_template_versions').insert({ template_id: templateId, version: nextVersion, content: input.content, placeholders: extractPlaceholders(input.content), created_by: userId }).select('id').single()
+  const sourcePdfPath = input.sourcePdf ? `${userId}/${templateId}/${newVersionId}.pdf` : current.sourcePdfPath
+  if (input.sourcePdf && sourcePdfPath) {
+    const { error: uploadError } = await supabase.storage.from('contract-template-pdfs').upload(sourcePdfPath, input.sourcePdf, { contentType: 'application/pdf', upsert: false })
+    if (uploadError) throw uploadError
+  }
+  const { data: version, error: versionError } = await supabase.from('contract_template_versions').insert({ template_id: templateId, version: nextVersion, content: input.content, source_pdf_path: sourcePdfPath, pdf_fields: input.pdfFields ?? [], placeholders: extractPlaceholders(input.content), created_by: userId }).select('id').single()
   if (versionError) throw versionError
   await supabase.from('audit_logs').insert({ user_id: userId, action: 'template.updated', entity_type: 'contract_template', entity_id: templateId, metadata: { version: nextVersion } })
-  return { ...current, ...input, version: nextVersion, versionId: version.id }
+  return { ...current, ...input, version: nextVersion, versionId: version.id, sourcePdfPath, pdfFields: input.pdfFields ?? [] }
 }
 
 export async function setTemplateStatus(templateId: string, status: 'active' | 'inactive', userId: string) {

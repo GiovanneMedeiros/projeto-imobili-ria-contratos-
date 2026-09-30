@@ -3,9 +3,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { ClientEditor, PropertyEditor } from './RecordsPages'
-import { createAndDownloadContract } from '../services/contracts'
+import { createAndDownloadContract, renderContractPdf } from '../services/contracts'
 import { listClients, listProperties } from '../services/records'
-import { listTemplates } from '../services/templates'
+import { getTemplatePdfBytes, listTemplates } from '../services/templates'
 import { formatTemplateValue, getFieldGroup, getFieldLabel, getFieldType, extractPlaceholders, renderTemplate } from '../lib/placeholders'
 import { formatCurrency, formatDocument, formatPhone, formatPostalCode, formatPropertyAddress, validateContractFields } from '../utils/format'
 import type { Client, ContractRecord, ContractTemplate, Property } from '../types/domain'
@@ -28,6 +28,7 @@ export function NewContractPage() {
   const [loadError, setLoadError] = useState('')
   const [validationError, setValidationError] = useState('')
   const [success, setSuccess] = useState('')
+  const [pdfPreview, setPdfPreview] = useState<{ key: string; url?: string; error?: string } | null>(null)
   const [clientEditorOpen, setClientEditorOpen] = useState(false)
   const [propertyEditorOpen, setPropertyEditorOpen] = useState(false)
 
@@ -54,7 +55,10 @@ export function NewContractPage() {
   }, [])
 
   const template = templates.find((item) => item.id === templateId)
-  const fields = useMemo(() => template ? extractPlaceholders(template.content) : [], [template])
+  const fields = useMemo(() => template
+    ? template.pdfFields?.length ? [...new Set(template.pdfFields.map((field) => field.key))] : extractPlaceholders(template.content)
+    : [], [template])
+  const fieldLabels = useMemo(() => new Map(template?.pdfFields?.map((field) => [field.key, field.label]) ?? []), [template])
   const groupedFields = useMemo(() => {
     const groups = new Map<string, string[]>()
     for (const field of fields) {
@@ -65,6 +69,37 @@ export function NewContractPage() {
   }, [fields])
   const renderedContent = template ? renderTemplate(template.content, Object.fromEntries(fields.map((field) => [field, formatTemplateValue(field, values[field] ?? '')]))) : ''
   const missingCount = fields.filter((field) => !values[field]?.trim()).length
+  const previewKey = template ? `${template.id}:${template.versionId ?? template.version}:${JSON.stringify(values)}` : ''
+
+  useEffect(() => {
+    if (!template?.sourcePdfPath && !template?.sourcePdfData) return
+    let active = true
+    let previewUrl = ''
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          let blob: Blob
+          if (missingCount > 0) {
+            const source = await getTemplatePdfBytes(template)
+            const buffer = source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength) as ArrayBuffer
+            blob = new Blob([buffer], { type: 'application/pdf' })
+          } else {
+            blob = await renderContractPdf({ template, values, renderedContent })
+          }
+          previewUrl = URL.createObjectURL(blob)
+          if (active) setPdfPreview({ key: previewKey, url: previewUrl })
+          else URL.revokeObjectURL(previewUrl)
+        } catch (error) {
+          if (active) setPdfPreview({ key: previewKey, error: error instanceof Error ? error.message : 'Não foi possível atualizar a prévia do PDF.' })
+        }
+      })()
+    }, 300)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [template, previewKey, missingCount, values, renderedContent])
 
   function selectTemplate(id: string) {
     setTemplateId(id)
@@ -102,8 +137,13 @@ export function NewContractPage() {
     setPropertyId(id)
     const property = properties.find((item) => item.id === id)
     if (!property) return
+    const owner = clients.find((item) => item.id === property.ownerId)
     setValues((current) => ({
       ...current,
+      ...(owner && fields.includes('locador_nome') ? { locador_nome: owner.name } : {}),
+      ...(owner && fields.includes('locador_cpf') ? { locador_cpf: owner.document } : {}),
+      ...(owner && fields.includes('locador_telefone') ? { locador_telefone: owner.phone } : {}),
+      ...(owner && fields.includes('locador_email') ? { locador_email: owner.email } : {}),
       ...(fields.includes('imovel_endereco') ? { imovel_endereco: formatPropertyAddress(property) } : {}),
       ...(fields.includes('imovel_cidade') ? { imovel_cidade: property.city } : {}),
       ...(fields.includes('imovel_estado') ? { imovel_estado: property.state } : {}),
@@ -192,7 +232,7 @@ export function NewContractPage() {
                     const kind = getFieldType(field)
                     return (
                       <label className={`editor-field${kind === 'text' && field.endsWith('_nome') || field.endsWith('_endereco') || field === 'observacoes' ? ' field-wide' : ''}`} key={field}>
-                        {getFieldLabel(field)}<span className="required-star">*</span>
+                        {fieldLabels.get(field) ?? getFieldLabel(field)}<span className="required-star">*</span>
                         <span className={`dynamic-input${kind === 'currency' ? ' currency-input' : ''}`}>
                           {kind === 'currency' && <span>R$</span>}
                           <input
@@ -225,11 +265,17 @@ export function NewContractPage() {
 
           <section className="preview-panel" aria-label="Pré-visualização do contrato">
             <div className="preview-panel-head"><div><span className="section-overline">PRÉVIA AO VIVO</span><h2>{template?.name ?? 'Documento'}</h2></div><span className="paper-size">A4 · v{template?.version}</span></div>
-            <article className="contract-paper">
+            {template?.sourcePdfPath || template?.sourcePdfData
+              ? pdfPreview?.key === previewKey && pdfPreview.url
+                ? <iframe className="template-pdf-viewer" src={pdfPreview.url} title={`Prévia preenchida: ${template.name}`} />
+                : pdfPreview?.key === previewKey && pdfPreview.error
+                  ? <div className="inline-alert" role="alert">{pdfPreview.error}</div>
+                  : <div className="template-pdf-loading">{missingCount ? `PDF original · ${missingCount} campos pendentes` : 'Atualizando prévia...'}</div>
+              : <article className="contract-paper">
               {template?.demonstration && <div className="paper-demo-stamp">DEMONSTRAÇÃO TÉCNICA · SEM VALIDADE JURÍDICA</div>}
               <pre>{renderedContent || 'Selecione um modelo para visualizar seu conteúdo.'}</pre>
-            </article>
-            <p className="preview-footnote">A prévia preserva o texto do modelo. Somente placeholders são substituídos pelos dados informados.</p>
+              </article>}
+            <p className="preview-footnote">{template?.sourcePdfPath || template?.sourcePdfData ? 'O PDF mantém a identidade visual original; os campos são substituídos nos locais marcados.' : 'A prévia preserva o texto do modelo. Somente placeholders são substituídos pelos dados informados.'}</p>
           </section>
         </div>
       )}
@@ -240,9 +286,10 @@ export function NewContractPage() {
         setClientEditorOpen(false)
       }} />}
       {propertyEditorOpen && <PropertyEditor clients={clients} onClose={() => setPropertyEditorOpen(false)} onSaved={(property) => {
+        const owner = clients.find((item) => item.id === property.ownerId)
         setProperties((current) => [property, ...current.filter((item) => item.id !== property.id)])
         setPropertyId(property.id)
-        setValues((current) => ({ ...current, ...(fields.includes('imovel_endereco') ? { imovel_endereco: formatPropertyAddress(property) } : {}), ...(fields.includes('imovel_cidade') ? { imovel_cidade: property.city } : {}), ...(fields.includes('imovel_estado') ? { imovel_estado: property.state } : {}), ...(fields.includes('imovel_codigo') ? { imovel_codigo: property.code } : {}) }))
+        setValues((current) => ({ ...current, ...(owner && fields.includes('locador_nome') ? { locador_nome: owner.name } : {}), ...(owner && fields.includes('locador_cpf') ? { locador_cpf: owner.document } : {}), ...(owner && fields.includes('locador_telefone') ? { locador_telefone: owner.phone } : {}), ...(owner && fields.includes('locador_email') ? { locador_email: owner.email } : {}), ...(fields.includes('imovel_endereco') ? { imovel_endereco: formatPropertyAddress(property) } : {}), ...(fields.includes('imovel_cidade') ? { imovel_cidade: property.city } : {}), ...(fields.includes('imovel_estado') ? { imovel_estado: property.state } : {}), ...(fields.includes('imovel_codigo') ? { imovel_codigo: property.code } : {}) }))
         setPropertyEditorOpen(false)
       }} />}
     </div>

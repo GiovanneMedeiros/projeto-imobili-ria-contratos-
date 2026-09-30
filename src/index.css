@@ -226,6 +226,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .pdf-import-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 10px 12px; border: 1px dashed #4b473d; border-radius: 4px; background: rgba(121, 103, 63, 0.08); }
 .pdf-import-row > span { color: #a29d90; font-size: 10px; line-height: 1.4; }
 .pdf-import-button { min-height: 34px; padding: 0 12px; font-size: 10px; }
+.pdf-field-setup { display: grid; gap: 10px; margin-top: 13px; padding: 11px; border: 1px solid #3d3a31; border-radius: 4px; background: #151513; }
+.pdf-field-setup > .outline-button, .pdf-field-setup > .gold-button { justify-content: center; min-height: 36px; }
+.pdf-field-list { display: grid; gap: 3px; }
+.pdf-field-list-row { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 5px 2px 9px; border: 1px solid #35332b; border-radius: 3px; color: #d0cabb; font-size: 10px; }
+.pdf-field-list-row .icon-button { width: 26px; height: 26px; flex: 0 0 auto; }
+.pdf-placement-pages { display: grid; max-height: min(76vh, 960px); gap: 14px; overflow: auto; padding: 2px 5px 8px 2px; }
+.pdf-placement-page { position: relative; width: 100%; border: 1px solid #d9d5ca; background: #fff; box-shadow: 0 5px 16px #0005; }
+.pdf-placement-page.is-placing { cursor: crosshair; outline: 2px solid var(--gold); outline-offset: 2px; }
+.pdf-placement-canvas { display: block; width: 100%; height: auto; }
+.pdf-placement-marker { position: absolute; z-index: 1; display: flex; min-height: 3.5%; align-items: center; overflow: hidden; padding: 1px 4px; border: 1px dashed #9a772c; color: #5f4818; background: #f4dc8bbd; font-size: 9px; line-height: 1.2; pointer-events: none; }
+.pdf-placement-page-number { position: absolute; right: 5px; bottom: 5px; z-index: 2; padding: 3px 5px; border-radius: 2px; color: #fff; background: #222d; font-size: 9px; pointer-events: none; }
 .template-content-label { margin-top: 17px; }
 .preview-toggle { border-color: #403d33; }
 .contract-pdf-preview-wrap { display: grid; gap: 8px; padding: 10px; border: 1px solid #d9d5ca; background: #f3f0e8; box-shadow: 0 6px 19px #0005; }
@@ -238,6 +249,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .placeholder-summary code { padding: 3px 5px; border: 1px solid #414035; border-radius: 3px; color: #dbc894; background: #222119; font-size: 9px; }
 .template-live-preview { position: sticky; top: 72px; padding: 14px; }
 .template-live-preview .contract-paper { min-height: 420px; }
+.template-pdf-viewer { display: block; width: 100%; height: min(76vh, 960px); min-height: 540px; border: 0; background: #fff; }
+.template-pdf-loading { display: grid; min-height: 540px; place-items: center; color: #aaa497; background: #f3f0e8; font-size: 12px; }
 .detail-grid { display: grid; grid-template-columns: minmax(250px, .65fr) minmax(0, 1.35fr); gap: 16px; margin-top: 22px; }
 .detail-summary { padding: 17px; }
 .detail-summary dl { display: grid; gap: 0; margin: 13px 0 18px; }

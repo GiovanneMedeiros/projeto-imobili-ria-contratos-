@@ -36,7 +36,7 @@ Nenhum contrato jurídico é incluído. O modelo demonstrativo, quando habilitad
 ## Supabase
 
 1. Crie um projeto Supabase e configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` no `.env.local`.
-2. Aplique `supabase/migrations/202609270001_initial_schema.sql` no SQL Editor do projeto.
+2. Aplique as migrations em `supabase/migrations/` em ordem no SQL Editor do projeto. As migrations `202609280001_template_source_pdfs.sql` e `202609280002_template_pdf_fields.sql` habilitam o armazenamento privado do PDF original e das posições dos campos visuais; `202609280003_contract_drafts.sql` cria a tabela de rascunhos e `202609280004_contract_status_values.sql` amplia os status aceitos em `contracts` (convertendo `review` em `in_review`).
 3. Convide colaboradores pelo Supabase Auth. O trigger cria o perfil como `broker`. Para o primeiro administrador, atualize `profiles.role` para `admin` no SQL Editor do projeto; depois, administradores existentes podem ajustar funções na área interna.
 4. Defina `VITE_DEMO_MODE=false` e reinicie o Vite.
 

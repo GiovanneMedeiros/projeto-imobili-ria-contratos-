@@ -12,6 +12,7 @@ import { TemplatesPage } from './pages/TemplatesPage'
 import { ClientsPage, PropertiesPage } from './pages/RecordsPages'
 import { ReportsPage } from './pages/ReportsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { DraftsPage } from './pages/DraftsPage'
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
               <Route path="imoveis" element={<PropertiesPage />} />
               <Route path="clientes" element={<ClientsPage />} />
               <Route path="contratos" element={<ContractsPage />} />
+              <Route path="rascunhos" element={<DraftsPage />} />
               <Route path="contratos/novo" element={<NewContractPage />} />
               <Route path="contratos/:id" element={<ContractDetailsPage />} />
               <Route element={<ProtectedRoute adminOnly />}>

@@ -30,9 +30,11 @@ export interface ContractTemplate {
   content: string
   sourcePdfPath?: string
   sourcePdfData?: string
+  sourceDocxPath?: string
+  sourceDocxData?: string
   pdfFields?: ContractTemplateField[]
   demonstration: boolean
-  versionHistory?: { id: string; version: string; content: string; createdAt: string; sourcePdfPath?: string; pdfFields?: ContractTemplateField[] }[]
+  versionHistory?: { id: string; version: string; content: string; createdAt: string; sourcePdfPath?: string; sourceDocxPath?: string; pdfFields?: ContractTemplateField[] }[]
 }
 
 export interface ContractTemplateField {

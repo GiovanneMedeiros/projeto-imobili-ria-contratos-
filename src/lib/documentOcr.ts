@@ -30,7 +30,15 @@ export function createDocumentReader(): DocumentReader {
   async function recognize(canvas: HTMLCanvasElement) {
     const ocr = await getWorker()
     const { data } = await ocr.recognize(canvas)
-    return data.text
+    return { text: data.text, confidence: data.confidence }
+  }
+
+  async function recognizeWithFallback(canvas: HTMLCanvasElement, onProgress: (message: string) => void) {
+    const first = await recognize(prepareCanvas(canvas))
+    if (first.confidence >= 62) return first.text
+    onProgress('Leitura fraca; tentando melhorar o contraste da imagem...')
+    const retry = await recognize(prepareThresholdCanvas(canvas))
+    return retry.confidence > first.confidence ? retry.text : first.text
   }
 
   return {
@@ -47,7 +55,7 @@ export function createDocumentReader(): DocumentReader {
           onProgress(`PDF escaneado: página ${page} de ${pages}...`)
           const canvas = document.createElement('canvas')
           await renderPdfPageToCanvas(file, canvas, page, 2.2)
-          parts.push(await recognize(prepareCanvas(canvas)))
+          parts.push(await recognizeWithFallback(canvas, onProgress))
         }
         return { text: parts.join('\n\n'), usedOcr: true }
       }
@@ -60,7 +68,7 @@ export function createDocumentReader(): DocumentReader {
       canvas.height = Math.round(bitmap.height * ratio)
       canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
       bitmap.close()
-      return { text: await recognize(prepareCanvas(canvas)), usedOcr: true }
+      return { text: await recognizeWithFallback(canvas, onProgress), usedOcr: true }
     },
     async close() {
       await worker?.terminate()
@@ -78,5 +86,51 @@ function prepareCanvas(source: HTMLCanvasElement) {
   if (!context) return source
   context.filter = 'grayscale(1) contrast(1.35)'
   context.drawImage(source, 0, 0)
+  return canvas
+}
+
+function prepareThresholdCanvas(source: HTMLCanvasElement) {
+  const canvas = document.createElement('canvas')
+  canvas.width = source.width
+  canvas.height = source.height
+  const context = canvas.getContext('2d')
+  if (!context) return source
+  context.drawImage(source, 0, 0)
+  const image = context.getImageData(0, 0, canvas.width, canvas.height)
+  const pixels = image.data
+  const histogram = new Uint32Array(256)
+  const grayscale = new Uint8Array(pixels.length / 4)
+  for (let pixel = 0, offset = 0; offset < pixels.length; pixel += 1, offset += 4) {
+    const value = Math.round(pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114)
+    grayscale[pixel] = value
+    histogram[value] += 1
+  }
+
+  const total = grayscale.length
+  let sum = 0
+  for (let value = 0; value < histogram.length; value += 1) sum += value * histogram[value]
+  let backgroundWeight = 0
+  let backgroundSum = 0
+  let threshold = 127
+  let maxVariance = 0
+  for (let value = 0; value < histogram.length; value += 1) {
+    backgroundWeight += histogram[value]
+    if (!backgroundWeight) continue
+    const foregroundWeight = total - backgroundWeight
+    if (!foregroundWeight) break
+    backgroundSum += value * histogram[value]
+    const meanBackground = backgroundSum / backgroundWeight
+    const meanForeground = (sum - backgroundSum) / foregroundWeight
+    const variance = backgroundWeight * foregroundWeight * (meanBackground - meanForeground) ** 2
+    if (variance > maxVariance) { maxVariance = variance; threshold = value }
+  }
+
+  for (let pixel = 0, offset = 0; offset < pixels.length; pixel += 1, offset += 4) {
+    const value = grayscale[pixel] > threshold ? 255 : 0
+    pixels[offset] = value
+    pixels[offset + 1] = value
+    pixels[offset + 2] = value
+  }
+  context.putImageData(image, 0, 0)
   return canvas
 }

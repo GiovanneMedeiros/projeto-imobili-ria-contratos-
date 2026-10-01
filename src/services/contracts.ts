@@ -2,8 +2,9 @@ import { createElement } from 'react'
 import { DEMO_CONTRACTS, DEMO_TEMPLATE } from '../data/demo'
 import { createBlankOfficialDocx, createOfficialDocx, OFFICIAL_DOCX_ID } from '../data/officialDocxTemplate'
 import { fillPdfFields, fillPdfPlaceholders } from '../lib/pdf'
+import { fillDocxTemplate } from '../lib/docx'
 import { extractPlaceholders, formatTemplateValue } from '../lib/placeholders'
-import { getTemplatePdfBytes, listTemplates } from './templates'
+import { getTemplateDocxBytes, getTemplatePdfBytes, listTemplates } from './templates'
 import { listClients, listProperties } from './records'
 import { formatPropertyAddress } from '../utils/format'
 import { demoMode, supabase } from '../lib/supabase'
@@ -61,6 +62,16 @@ export function getContractStatusClass(status: ContractStatusValue): string {
 export function getMissingContractPlaceholders(template: ContractTemplate, values: Record<string, string>) {
   const placeholders = extractPlaceholders(template.content)
   return placeholders.filter((field) => !String(values[field] ?? '').trim())
+}
+
+export function isWordTemplate(template: ContractTemplate) {
+  return template.id === OFFICIAL_DOCX_ID || Boolean(template.sourceDocxPath || template.sourceDocxData)
+}
+
+export async function renderContractDocx(input: Pick<CreateContractInput, 'template' | 'values'>) {
+  if (input.template.id === OFFICIAL_DOCX_ID) return createOfficialDocx(input.values)
+  if (!input.template.sourceDocxPath && !input.template.sourceDocxData) throw new Error('O arquivo Word original deste modelo não está disponível.')
+  return fillDocxTemplate(await getTemplateDocxBytes(input.template), input.values)
 }
 
 export function getContractReviewIssues(template: ContractTemplate, values: Record<string, string>, clientId: string, propertyId: string): ContractReviewIssue[] {
@@ -215,10 +226,10 @@ export async function renderContractPdf(input: Pick<CreateContractInput, 'templa
 }
 
 export async function createAndDownloadContract(input: CreateContractInput) {
-  const isOfficialWord = input.template.id === OFFICIAL_DOCX_ID
-  const blob = isOfficialWord ? await createOfficialDocx(input.values) : await renderContractPdf(input)
+  const isWord = isWordTemplate(input.template)
+  const blob = isWord ? await renderContractDocx(input) : await renderContractPdf(input)
   const safeName = input.template.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()
-  const fileName = `contrato-${safeName}-${new Date().toISOString().slice(0, 10)}.${isOfficialWord ? 'docx' : 'pdf'}`
+  const fileName = `contrato-${safeName}-${new Date().toISOString().slice(0, 10)}.${isWord ? 'docx' : 'pdf'}`
 
   if (demoMode) {
     const [clients, properties] = await Promise.all([listClients(), listProperties()])
@@ -250,7 +261,7 @@ export async function createAndDownloadContract(input: CreateContractInput) {
   await supabase.from('audit_logs').insert({ user_id: authData.user.id, action: 'contract.created', entity_type: 'contract', entity_id: contract.id, metadata: { template_id: input.template.id } })
 
   const storagePath = `${authData.user.id}/${contract.id}/${fileName}`
-  const contentType = isOfficialWord ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf'
+  const contentType = isWord ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf'
   const { error: uploadError } = await supabase.storage.from('contract-pdfs').upload(storagePath, blob, { contentType, upsert: false })
   if (uploadError) {
     await supabase.from('contracts').update({ status: 'pdf_failed' }).eq('id', contract.id)
@@ -359,10 +370,10 @@ export async function downloadSavedContract(id: string) {
   if (demoMode) {
     const saved = getSavedDemoContracts().find((item) => item.id === id)
     if (!saved) throw new Error('Este registro demonstrativo não possui um arquivo salvo.')
-    if (saved.templateId === OFFICIAL_DOCX_ID) {
-      downloadBlob(await createOfficialDocx(saved.values), saved.fileName)
+    const template = (await listTemplates(true)).find((item) => item.id === saved.templateId) ?? DEMO_TEMPLATE
+    if (isWordTemplate(template)) {
+      downloadBlob(await renderContractDocx({ template, values: saved.values }), saved.fileName)
     } else {
-      const template = (await listTemplates(true)).find((item) => item.id === saved.templateId) ?? DEMO_TEMPLATE
       downloadBlob(await renderContractPdf({ template, values: saved.values, renderedContent: saved.content }), saved.fileName)
     }
     return

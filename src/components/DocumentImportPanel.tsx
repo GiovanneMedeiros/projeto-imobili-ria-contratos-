@@ -1,5 +1,5 @@
-import { AlertTriangle, Camera, Check, FileUp, LoaderCircle, ScanText, Trash2 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Camera, Check, FileUp, LoaderCircle, ScanText, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createDocumentReader } from '../lib/documentOcr'
 import { DOCUMENT_KIND_LABELS, detectDocumentKind, parsePersonDocument, parsePropertyRegistration, type DocumentKind, type Extracted, type PersonKey, type PropertyKey } from '../lib/documentParser'
 import { getFieldGroup, getFieldLabel, getFieldType } from '../lib/placeholders'
@@ -10,7 +10,7 @@ interface ExtraInfo { id: string; label: string; value: string; source: string }
 
 const PERSON_ROLES: [string, string][] = [
   ['vendedor', 'Vendedor(a)'], ['anuente', 'Cônjuge do vendedor (anuente)'], ['comprador', 'Comprador(a)'], ['comprador_2', '2º comprador(a)'],
-  ['locador', 'Locador(a)'], ['locatario', 'Locatário(a)'],
+  ['locador', 'Locador(a)'], ['locatario', 'Locatário(a)'], ['locatario_2', '2º locatário(a)'],
 ]
 const PERSON_KEYS: PersonKey[] = ['nome', 'cpf', 'rg', 'estado_civil', 'profissao', 'nacionalidade', 'endereco', 'cidade', 'estado']
 const PROPERTY_KEYS: PropertyKey[] = ['matricula', 'comarca', 'endereco', 'cidade', 'descricao']
@@ -44,9 +44,13 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
   const [processedRoles, setProcessedRoles] = useState<string[]>([])
   const [overwrite, setOverwrite] = useState(false)
   const [message, setMessage] = useState('')
+  const [reviewOpen, setReviewOpen] = useState(false)
   const fileInput = useRef<HTMLInputElement | null>(null)
   const cameraInput = useRef<HTMLInputElement | null>(null)
+  const readerRef = useRef<ReturnType<typeof createDocumentReader> | null>(null)
   const activeRole = roles.some(([prefix]) => prefix === role) ? role : roles[0]?.[0] ?? ''
+
+  useEffect(() => () => { void readerRef.current?.close() }, [])
 
   if (!roles.length) return null
 
@@ -54,7 +58,8 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
     const files = [...(fileList ?? [])]
     if (!files.length || !activeRole) return
     setMessage('')
-    const reader = createDocumentReader()
+    const reader = readerRef.current ?? createDocumentReader()
+    readerRef.current = reader
     const draft = { ...review }
     const draftExtras = [...extras]
     const draftNotes = [...notes]
@@ -120,15 +125,20 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
         setNotes([...new Set(draftNotes)])
       }
     } finally {
-      await reader.close()
       setProgress('')
       if (fileInput.current) fileInput.current.value = ''
       if (cameraInput.current) cameraInput.current.value = ''
+      setReviewOpen(true)
     }
   }
 
   function edit(key: string, value: string) {
     setReview((current) => ({ ...current, [key]: { value, confidence: 'edited', source: current[key]?.source ?? 'Manual' } }))
+    setMessage('')
+  }
+
+  function editExtra(id: string, value: string) {
+    setExtras((current) => current.map((item) => item.id === id ? { ...item, value } : item))
     setMessage('')
   }
 
@@ -153,10 +163,12 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
     }
     const count = onApply(result, overwrite)
     setMessage(count ? `${count} campo(s) aplicados. Confira nas etapas abaixo e complete os dados da negociação.` : 'Nenhum campo aplicado — os campos já estavam preenchidos. Marque "substituir" para sobrescrever.')
+    if (count) setReviewOpen(false)
   }
 
   function reset() {
     setReview({}); setExtras([]); setOwners([]); setNotes([]); setProcessed([]); setProcessedRoles([]); setMessage('')
+    setReviewOpen(false)
   }
 
   const reviewKeys = [...new Set([
@@ -166,7 +178,7 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
   const grouped = new Map<string, string[]>()
   for (const key of reviewKeys) {
     const prefix = key.replace(/^opcional_/, '')
-    const group = prefix.startsWith('comprador_2') ? '2º comprador(a)' : prefix.startsWith('anuente') ? 'Cônjuge do vendedor (anuente)' : getFieldGroup(key)
+    const group = prefix.startsWith('comprador_2') ? '2º comprador(a)' : prefix.startsWith('locatario_2') ? '2º locatário(a)' : prefix.startsWith('anuente') ? 'Cônjuge do vendedor (anuente)' : getFieldGroup(key)
     grouped.set(group, [...(grouped.get(group) ?? []), key])
   }
 
@@ -195,25 +207,35 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
         {progress && <span className="doc-import-progress" role="status"><LoaderCircle className="spin-icon" size={14} />{progress}</span>}
       </div>
 
-      {processed.length > 0 && <ul className="doc-import-files">
-        {processed.map((item, index) => <li key={`${item.name}-${index}`} className={item.error ? 'doc-import-file-error' : ''}>{item.error ? <AlertTriangle size={13} /> : <Check size={13} />}<span><strong>{item.label}</strong> · {item.role} · {item.name}{item.error ? ` — ${item.error}` : ''}</span></li>)}
-      </ul>}
-
-      {notes.map((note) => <div className="template-demo-alert" key={note}><AlertTriangle size={14} /><span>{note}</span></div>)}
-
-      {owners.length > 0 && <div className="doc-import-owners">
-        <strong>Proprietários encontrados na matrícula (sugestão)</strong>
-        {owners.map((owner) => <div key={owner.nome} className="doc-import-owner">
-          <span>{owner.nome}{owner.cpf ? ` · CPF ${owner.cpf}` : ''}</span>
-          {fieldKey('vendedor_nome') && <button className="inline-create-link" type="button" onClick={() => assignOwner(owner, 'vendedor')}>Usar como vendedor</button>}
-          {fieldKey('anuente_nome') && <button className="inline-create-link" type="button" onClick={() => assignOwner(owner, 'anuente')}>Usar como anuente</button>}
-          {fieldKey('locador_nome') && <button className="inline-create-link" type="button" onClick={() => assignOwner(owner, 'locador')}>Usar como locador</button>}
-        </div>)}
+      {processed.length > 0 && !reviewOpen && <div className="doc-import-result-link">
+        <span>{processed.filter((item) => !item.error).length} documento(s) lido(s)</span>
+        <button className="inline-create-link" type="button" onClick={() => setReviewOpen(true)}>Revisar dados</button>
       </div>}
+      {message && !reviewOpen && <div className="success-alert" role="status"><Check size={15} />{message}</div>}
 
-      {reviewKeys.length > 0 && <div className="doc-import-review">
-        <h3>Conferência dos dados lidos</h3>
-        <p className="doc-import-hint">Revise e corrija antes de aplicar. <b className="conf-badge conf-low">Conferir</b> = leitura automática sem validação · <b className="conf-badge conf-high">Validado</b> = CPF com dígitos conferidos · <b className="conf-badge conf-empty">Não encontrado</b> = preencher manualmente.</p>
+      {reviewOpen && <div className="modal-backdrop doc-import-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewOpen(false) }}>
+        <section className="doc-import-modal" role="dialog" aria-modal="true" aria-labelledby="doc-import-title">
+          <header>
+            <div><span className="section-overline">LEITURA AUTOMÁTICA</span><h2 id="doc-import-title">Confira os dados encontrados</h2><p>Corrija o que precisar antes de aplicar ao contrato.</p></div>
+            <button className="icon-button" type="button" onClick={() => setReviewOpen(false)} aria-label="Fechar conferência"><X size={17} /></button>
+          </header>
+          <div className="doc-import-modal-body">
+            <ul className="doc-import-files">
+              {processed.map((item, index) => <li key={`${item.name}-${index}`} className={item.error ? 'doc-import-file-error' : ''}>{item.error ? <AlertTriangle size={13} /> : <Check size={13} />}<span><strong>{item.label}</strong> · {item.role} · {item.name}{item.error ? ` — ${item.error}` : ''}</span></li>)}
+            </ul>
+            {notes.map((note) => <div className="template-demo-alert" key={note}><AlertTriangle size={14} /><span>{note}</span></div>)}
+            {owners.length > 0 && <div className="doc-import-owners">
+              <strong>Proprietários encontrados na matrícula (sugestão)</strong>
+              {owners.map((owner) => <div key={owner.nome} className="doc-import-owner">
+                <span>{owner.nome}{owner.cpf ? ` · CPF ${owner.cpf}` : ''}</span>
+                {fieldKey('vendedor_nome') && <button className="inline-create-link" type="button" onClick={() => assignOwner(owner, 'vendedor')}>Usar como vendedor</button>}
+                {fieldKey('anuente_nome') && <button className="inline-create-link" type="button" onClick={() => assignOwner(owner, 'anuente')}>Usar como anuente</button>}
+                {fieldKey('locador_nome') && <button className="inline-create-link" type="button" onClick={() => assignOwner(owner, 'locador')}>Usar como locador</button>}
+              </div>)}
+            </div>}
+            {reviewKeys.length > 0 ? <div className="doc-import-review">
+        <h3>Dados extraídos</h3>
+        <p className="doc-import-hint">Confira os campos e corrija se necessário. <b className="conf-badge conf-low">Conferir</b> = leitura automática · <b className="conf-badge conf-high">Validado</b> = CPF validado · <b className="conf-badge conf-empty">Não encontrado</b> = completar manualmente.</p>
         {[...grouped.entries()].map(([group, keys]) => <fieldset className="dynamic-fieldset" key={group}>
           <legend>{group}</legend>
           <div className="dynamic-field-grid">
@@ -233,14 +255,17 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
         </fieldset>)}
         {extras.length > 0 && <div className="doc-import-extras">
           <strong>Outras informações lidas (sem campo correspondente neste modelo)</strong>
-          <ul>{extras.map((item) => <li key={item.id}>{item.label}: <span>{item.value}</span></li>)}</ul>
+          <div className="doc-import-extra-fields">{extras.map((item) => <label className="editor-field" key={item.id} title={item.source}>{item.label}<input value={item.value} onChange={(event) => editExtra(item.id, event.target.value)} /></label>)}</div>
         </div>}
         <div className="doc-import-apply">
           <label className="doc-import-overwrite"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} />Substituir campos já preenchidos</label>
           <button className="outline-button" type="button" onClick={reset}><Trash2 size={14} />Limpar leitura</button>
-          <button className="gold-button" type="button" onClick={apply} disabled={Boolean(progress)}><Check size={15} />Confirmar e aplicar aos campos</button>
+          <button className="gold-button" type="button" onClick={apply} disabled={Boolean(progress)}><Check size={15} />Aplicar dados ao contrato</button>
         </div>
         {message && <div className="success-alert" role="status"><Check size={15} />{message}</div>}
+            </div> : <div className="doc-import-no-data"><AlertTriangle size={16} />Nenhum dado compatível foi reconhecido. Tente uma imagem mais nítida ou confira os campos manualmente.</div>}
+          </div>
+        </section>
       </div>}
     </div>
   )

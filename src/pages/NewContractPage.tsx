@@ -4,15 +4,28 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { ClientEditor, PropertyEditor } from './RecordsPages'
 import { DocumentImportPanel } from '../components/DocumentImportPanel'
-import { createAndDownloadContract, downloadBlankOfficialContract, renderContractPdf } from '../services/contracts'
+import { createAndDownloadContract, downloadBlankOfficialContract, isWordTemplate, renderContractDocx, renderContractPdf } from '../services/contracts'
 import { listClients, listProperties } from '../services/records'
 import { getTemplatePdfBytes, listTemplates } from '../services/templates'
 import { formatTemplateValue, getFieldGroup, getFieldLabel, getFieldType, extractPlaceholders, renderTemplate } from '../lib/placeholders'
 import { formatCurrency, formatDocument, formatPhone, formatPostalCode, formatPropertyAddress, validateContractFields } from '../utils/format'
 import { OFFICIAL_DOCX_FIELDS, OFFICIAL_DOCX_ID } from '../data/officialDocxTemplate'
+import { inferDocxTemplateFields } from '../lib/docx'
 import type { Client, ContractRecord, ContractTemplate, Property } from '../types/domain'
 
 const sectionOrder = ['Locador', 'Locatário', 'Vendedor', 'Comprador', 'Partes adicionais', 'Imóvel', 'Imóvel e situação', 'Valores', 'Pagamento', 'Penalidades', 'Prazos', 'Vigência', 'Imobiliária e corretagem', 'Assinaturas', 'Observações', 'Informações adicionais']
+type ContractKind = 'sale' | 'rental'
+
+function getContractKind(template: ContractTemplate): ContractKind | null {
+  const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const type = normalize(template.type)
+  if (/loca|aluguel|arrendamento/.test(type)) return 'rental'
+  if (/compra|venda|promessa/.test(type)) return 'sale'
+  const name = normalize(template.name)
+  if (/loca|aluguel|arrendamento/.test(name)) return 'rental'
+  if (/compra|venda|promessa/.test(name)) return 'sale'
+  return null
+}
 
 export function NewContractPage() {
   const { user } = useAuth()
@@ -21,6 +34,7 @@ export function NewContractPage() {
   const [templates, setTemplates] = useState<ContractTemplate[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [properties, setProperties] = useState<Property[]>([])
+  const [contractKind, setContractKind] = useState<ContractKind>('sale')
   const [templateId, setTemplateId] = useState('')
   const [clientId, setClientId] = useState('')
   const [propertyId, setPropertyId] = useState('')
@@ -44,8 +58,13 @@ export function NewContractPage() {
       setTemplates(modelList)
       setClients(clientList)
       setProperties(propertyList)
-      const selectedTemplate = modelList.find((item) => item.id === duplicateContract?.templateId || item.name === duplicateContract?.templateName)
-      setTemplateId(selectedTemplate?.id ?? modelList[0]?.id ?? '')
+      const requestedTemplate = modelList.find((item) => item.id === duplicateContract?.templateId || item.name === duplicateContract?.templateName)
+      const initialKind = requestedTemplate ? getContractKind(requestedTemplate) ?? 'sale' : getContractKind(modelList[0]) ?? 'sale'
+      const selectedTemplate = requestedTemplate && getContractKind(requestedTemplate) === initialKind
+        ? requestedTemplate
+        : modelList.find((item) => getContractKind(item) === initialKind)
+      setContractKind(initialKind)
+      setTemplateId(selectedTemplate?.id ?? '')
       if (duplicateContract) {
         setClientId(duplicateContract.clientId ?? '')
         setPropertyId(duplicateContract.propertyId ?? '')
@@ -60,12 +79,15 @@ export function NewContractPage() {
   }, [])
 
   const template = templates.find((item) => item.id === templateId)
+  const compatibleTemplates = templates.filter((item) => getContractKind(item) === contractKind)
+  const wordTemplate = template ? isWordTemplate(template) : false
   const fields = useMemo(() => {
     if (!template) return []
     if (template.id === OFFICIAL_DOCX_ID) return [...OFFICIAL_DOCX_FIELDS]
     if (template.pdfFields?.length) return [...new Set(template.pdfFields.map((field) => field.key))]
-    return extractPlaceholders(template.content)
-  }, [template])
+    const placeholders = extractPlaceholders(template.content)
+    return wordTemplate ? [...new Set([...placeholders, ...inferDocxTemplateFields(template.content)])] : placeholders
+  }, [template, wordTemplate])
   const fieldLabels = useMemo(() => new Map(template?.pdfFields?.map((field) => [field.key, field.label]) ?? []), [template])
   const groupedFields = useMemo(() => {
     const groups = new Map<string, string[]>()
@@ -117,6 +139,20 @@ export function NewContractPage() {
 
   function selectTemplate(id: string) {
     setTemplateId(id)
+    const nextTemplate = templates.find((item) => item.id === id)
+    if (nextTemplate) setContractKind(getContractKind(nextTemplate) ?? contractKind)
+    setActiveGroupIndex(0)
+    setValues({})
+    setValidationError('')
+    setSuccess('')
+  }
+
+  function selectContractKind(kind: ContractKind) {
+    setContractKind(kind)
+    const nextTemplate = templates.find((item) => getContractKind(item) === kind)
+    setTemplateId(nextTemplate?.id ?? '')
+    setClientId('')
+    setPropertyId('')
     setActiveGroupIndex(0)
     setValues({})
     setValidationError('')
@@ -200,7 +236,7 @@ export function NewContractPage() {
         renderedContent,
         userId: user?.id ?? '',
       })
-      setSuccess(`${template.id === OFFICIAL_DOCX_ID ? 'Word' : 'PDF'} ${result.fileName} gerado e baixado.`)
+      setSuccess(`${isWordTemplate(template) ? 'Word' : 'PDF'} ${result.fileName} gerado e baixado.`)
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : 'Não foi possível gerar o PDF. Tente novamente.')
     } finally {
@@ -223,7 +259,7 @@ export function NewContractPage() {
   }
 
   useEffect(() => {
-    if (template?.id !== OFFICIAL_DOCX_ID || !previewHostRef.current) return
+    if (!wordTemplate || !template || !previewHostRef.current) return
     let active = true
     let resizeObserver: ResizeObserver | undefined
     const host = previewHostRef.current
@@ -231,13 +267,12 @@ export function NewContractPage() {
       void (async () => {
         setPreviewStatus('Atualizando prévia...')
         const blank = '________________________'
-        const previewValues = Object.fromEntries(OFFICIAL_DOCX_FIELDS.map((field) => [field, values[field]?.trim() || blank]))
+        const previewValues = Object.fromEntries(fields.map((field) => [field, values[field]?.trim() || blank]))
         try {
-          const [{ renderAsync }, { createOfficialDocx }] = await Promise.all([
-            import('docx-preview'),
-            import('../data/officialDocxTemplate'),
-          ])
-          const docxBlob = await createOfficialDocx(previewValues)
+          const { renderAsync } = await import('docx-preview')
+          const docxBlob = template.id === OFFICIAL_DOCX_ID
+            ? await import('../data/officialDocxTemplate').then(({ createOfficialDocx }) => createOfficialDocx(previewValues))
+            : await renderContractDocx({ template, values: previewValues })
           if (!active) return
           const pageMount = document.createElement('div')
           const styleMount = document.createElement('div')
@@ -271,7 +306,7 @@ export function NewContractPage() {
       window.clearTimeout(timer)
       resizeObserver?.disconnect()
     }
-  }, [template?.id, values])
+  }, [wordTemplate, template, fields, values])
 
   if (loading) return <div className="route-loading" role="status">Carregando dados do contrato...</div>
 
@@ -281,7 +316,7 @@ export function NewContractPage() {
         <div>
           <span className="section-overline">DOCUMENTOS · NOVO</span>
           <h1>Novo contrato</h1>
-          <p>Selecione a versão aprovada e preencha apenas os campos do documento.</p>
+          <p>Escolha o tipo, envie os documentos e confira os dados encontrados.</p>
         </div>
         <Link className="outline-button back-link" to="/contratos"><ArrowRight size={15} />Voltar aos contratos</Link>
       </section>
@@ -292,18 +327,26 @@ export function NewContractPage() {
       )}
 
       {templates.length > 0 && (
-        <div className="contract-editor-grid">
+        <div className={`contract-editor-grid${template ? '' : ' contract-editor-no-template'}`}>
           <section className="contract-form-panel">
-            <div className="editor-section-head"><div><span className="section-overline">01 · MODELO</span><h2>Documento base</h2></div></div>
+            <div className="editor-section-head"><div><span className="section-overline">01 · TIPO</span><h2>O que vamos gerar?</h2></div></div>
+            <div className="contract-kind-switch" role="group" aria-label="Tipo de contrato">
+              <button className={contractKind === 'sale' ? 'contract-kind-active' : ''} type="button" aria-pressed={contractKind === 'sale'} onClick={() => selectContractKind('sale')}><FileText size={16} />Compra e venda</button>
+              <button className={contractKind === 'rental' ? 'contract-kind-active' : ''} type="button" aria-pressed={contractKind === 'rental'} onClick={() => selectContractKind('rental')}><Building2 size={16} />Locação</button>
+            </div>
+            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">02 · MODELO</span><h2>Documento base</h2></div></div>
             <label className="editor-field">Modelo de contrato
-              <select value={templateId} onChange={(event) => selectTemplate(event.target.value)}>
-                {templates.map((item) => <option value={item.id} key={item.id}>{item.name} · v{item.version}{item.demonstration ? ' · DEMONSTRAÇÃO' : ''}</option>)}
+              <select value={compatibleTemplates.some((item) => item.id === templateId) ? templateId : ''} onChange={(event) => selectTemplate(event.target.value)} disabled={!compatibleTemplates.length}>
+                <option value="">{compatibleTemplates.length ? 'Selecionar modelo' : 'Nenhum modelo cadastrado para este tipo'}</option>
+                {compatibleTemplates.map((item) => <option value={item.id} key={item.id}>{item.name} · v{item.version}{item.demonstration ? ' · DEMONSTRAÇÃO' : ''}</option>)}
               </select>
             </label>
+            {!compatibleTemplates.length && <p className="empty-reference-note">Não há modelo ativo para {contractKind === 'sale' ? 'compra e venda' : 'locação'}. {user?.role === 'admin' ? <Link className="subtle-link" to="/modelos/novo">Cadastrar modelo</Link> : 'Peça ao administrador para cadastrar um modelo desse tipo.'}</p>}
             {template?.demonstration && <div className="template-demo-alert"><Info size={15} /><span>Este modelo é apenas uma demonstração técnica. Não contém cláusulas jurídicas e não deve ser assinado.</span></div>}
             {template?.id === OFFICIAL_DOCX_ID && <div className="template-demo-alert"><Info size={15} /><div><span>Escolha como quer preencher: use o formulário organizado por etapas ou baixe uma cópia em branco para preencher direto no Word. O layout original da Miellis é mantido.</span><button className="outline-button blank-template-button" type="button" onClick={() => void downloadBlankTemplate()} disabled={busy}><Download size={14} />Baixar Word em branco</button></div></div>}
 
-            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">02 · REFERÊNCIAS</span><h2>Cliente e imóvel</h2></div></div>
+            {template && <>
+            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">03 · REFERÊNCIAS</span><h2>Cliente e imóvel</h2></div></div>
             <div className="reference-grid">
               <div className="reference-select"><label className="editor-field"><span className="field-label-with-icon"><UserRound size={14} />Cliente</span>
                   <select value={clientId} onChange={(event) => selectClient(event.target.value)} required>
@@ -321,11 +364,11 @@ export function NewContractPage() {
             {(clients.length === 0 || properties.length === 0) && <p className="empty-reference-note">Cadastre clientes e imóveis antes de gerar documentos reais.</p>}
 
             {fields.length > 0 && <>
-              <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">03 · LEITURA AUTOMÁTICA (OPCIONAL)</span><h2>Documentos</h2></div></div>
+              <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">04 · LEITURA AUTOMÁTICA</span><h2>Documentos</h2></div></div>
               <DocumentImportPanel key={templateId} fields={fields} values={values} onApply={applyExtractedValues} />
             </>}
 
-            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">04 · PREENCHIMENTO GUIADO</span><h2>Dados da venda</h2></div><span className="field-count">{activeGroupIndex + 1} de {groupedFields.length} etapas</span></div>
+            <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">05 · COMPLEMENTO</span><h2>Dados do contrato</h2></div><span className="field-count">{activeGroupIndex + 1} de {groupedFields.length} etapas</span></div>
             <div className="field-stepper" aria-label="Etapas dos dados do contrato">
               {groupedFields.map(([group, groupFields], index) => {
                 const pending = groupFields.filter((field) => !field.startsWith('opcional_') && !values[field]?.trim()).length
@@ -374,13 +417,14 @@ export function NewContractPage() {
               <span>{missingCount > 0 ? `${missingCount} campos pendentes` : 'Campos preenchidos'}</span>
               <button className="gold-button" type="button" onClick={() => void generate()} disabled={busy || !template || (template.id !== OFFICIAL_DOCX_ID && (clients.length === 0 || properties.length === 0))}>
                 {busy ? <LoaderCircle className="spin-icon" size={16} /> : <FileText size={16} />}
-                {busy ? 'Gerando documento...' : template?.id === OFFICIAL_DOCX_ID ? 'Gerar Word original' : 'Gerar PDF'}
+                {busy ? 'Gerando documento...' : wordTemplate ? 'Gerar documento Word' : 'Gerar PDF'}
               </button>
             </div>
+            </>}
           </section>
 
-          {template?.id === OFFICIAL_DOCX_ID ? <section className="preview-panel live-docx-preview-panel" aria-label="Pré-visualização ao vivo do contrato original">
-            <div className="preview-panel-head"><div><span className="section-overline">PRÉVIA AO VIVO</span><h2>{template.name}</h2></div><span className="paper-size">DOCX original</span></div>
+          {template && (wordTemplate ? <section className="preview-panel live-docx-preview-panel" aria-label="Pré-visualização ao vivo do contrato Word">
+            <div className="preview-panel-head"><div><span className="section-overline">PRÉVIA AO VIVO</span><h2>{template?.name ?? 'Documento'}</h2></div><span className="paper-size">DOCX original</span></div>
             <div className="docx-preview-status" role="status"><LoaderCircle className={previewStatus.includes('...') ? 'spin-icon' : ''} size={13} />{previewStatus}</div>
             <div className="docx-preview-host" ref={previewHostRef} aria-live="polite" />
             <p className="preview-footnote">A prévia mostra o documento original com os dados preenchidos e linhas nos campos ainda vazios. A paginação final pode variar no Microsoft Word.</p>
@@ -397,7 +441,7 @@ export function NewContractPage() {
               <pre>{renderedContent || 'Selecione um modelo para visualizar seu conteúdo.'}</pre>
               </article>}
             <p className="preview-footnote">{template?.sourcePdfPath || template?.sourcePdfData ? 'O PDF mantém a identidade visual original; os campos são substituídos nos locais marcados.' : 'A prévia preserva o texto do modelo. Somente placeholders são substituídos pelos dados informados.'}</p>
-          </section>}
+          </section>)}
         </div>
       )}
       {clientEditorOpen && <ClientEditor onClose={() => setClientEditorOpen(false)} onSaved={(client) => {

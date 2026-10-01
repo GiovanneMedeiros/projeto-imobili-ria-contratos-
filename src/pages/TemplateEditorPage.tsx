@@ -5,7 +5,8 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { extractPlaceholders, getFieldLabel, getFieldType } from '../lib/placeholders'
 import { extractPdfText, getPdfPageCount, renderPdfPageToCanvas } from '../lib/pdf'
-import { createTemplate, getTemplatePdfBytes, listTemplates, updateTemplate } from '../services/templates'
+import { extractDocxText, inferDocxTemplateFields } from '../lib/docx'
+import { createTemplate, getTemplateDocxBytes, getTemplatePdfBytes, listTemplates, updateTemplate } from '../services/templates'
 import type { ContractTemplate, ContractTemplateField } from '../types/domain'
 
 const fieldOptions = [
@@ -32,7 +33,7 @@ const schema = z.object({
   type: z.string().trim().min(2, 'Selecione o tipo de contrato.'),
   content: z.string().trim().min(12, 'Adicione o conteúdo aprovado pela Miellis.'),
   pdfFields: z.array(z.object({ key: z.string(), label: z.string(), page: z.number(), x: z.number(), y: z.number(), width: z.number() })),
-}).refine((value) => extractPlaceholders(value.content).length > 0 || value.pdfFields.length > 0, { message: 'Adicione um campo visual no PDF ou use marcadores no documento.', path: ['pdfFields'] })
+})
 
 interface EditorLocationState {
   template?: ContractTemplate
@@ -55,6 +56,7 @@ export function TemplateEditorPage() {
   const [uploadingPdf, setUploadingPdf] = useState(false)
   const [showPreview, setShowPreview] = useState(true)
   const [sourcePdf, setSourcePdf] = useState<File | null>(null)
+  const [sourceDocx, setSourceDocx] = useState<File | null>(null)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState('')
   const [pdfPageCount, setPdfPageCount] = useState(0)
   const [pdfFields, setPdfFields] = useState<ContractTemplateField[]>(state?.template?.pdfFields ?? [])
@@ -63,10 +65,11 @@ export function TemplateEditorPage() {
   const [placingFieldLabel, setPlacingFieldLabel] = useState('')
   const [customFieldLabel, setCustomFieldLabel] = useState('')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const docxPreviewRef = useRef<HTMLDivElement | null>(null)
   const pdfCanvasRefs = useRef(new Map<number, HTMLCanvasElement>())
   const pdfPreviewUrlRef = useRef('')
   const pdfSelectionVersionRef = useRef(0)
-  const fields = useMemo(() => extractPlaceholders(content), [content])
+  const fields = useMemo(() => [...new Set([...extractPlaceholders(content), ...(sourceDocx ? inferDocxTemplateFields(content) : [])])], [content, sourceDocx])
   const fieldCount = pdfFields.length || fields.length
 
   useEffect(() => () => {
@@ -74,6 +77,20 @@ export function TemplateEditorPage() {
   }, [])
 
   useEffect(() => {
+    if (template?.sourceDocxPath || template?.sourceDocxData) {
+      let active = true
+      const selectionVersion = pdfSelectionVersionRef.current
+      void getTemplateDocxBytes(template).then((bytes) => {
+        if (!active || selectionVersion !== pdfSelectionVersionRef.current) return
+        setSourceDocx(new File([bytes], `${template.name}.docx`, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }))
+        setSourcePdf(null)
+        setPdfPageCount(0)
+        setPdfPreviewUrl('')
+      }).catch(() => {
+        if (active) setError('Não foi possível carregar o Word original deste modelo.')
+      })
+      return () => { active = false }
+    }
     if (!template?.sourcePdfPath && !template?.sourcePdfData) return
     let active = true
     const selectionVersion = pdfSelectionVersionRef.current
@@ -86,13 +103,14 @@ export function TemplateEditorPage() {
       if (pdfPreviewUrlRef.current) URL.revokeObjectURL(pdfPreviewUrlRef.current)
       pdfPreviewUrlRef.current = url
       setSourcePdf(file)
+      setSourceDocx(null)
       setPdfPageCount(pageCount)
       setPdfPreviewUrl(url)
     }).catch(() => {
       if (active) setError('Não foi possível carregar o PDF original deste modelo.')
     })
     return () => { active = false }
-  }, [template?.id, template?.versionId, template?.sourcePdfPath, template?.sourcePdfData])
+  }, [template?.id, template?.versionId, template?.sourcePdfPath, template?.sourcePdfData, template?.sourceDocxPath, template?.sourceDocxData])
 
   async function handlePdfUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -100,6 +118,21 @@ export function TemplateEditorPage() {
     setUploadingPdf(true)
     setError('')
     try {
+      const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || file.name.toLowerCase().endsWith('.docx')
+      if (isDocx) {
+        const importedText = await extractDocxText(file)
+        pdfSelectionVersionRef.current += 1
+        if (pdfPreviewUrlRef.current) URL.revokeObjectURL(pdfPreviewUrlRef.current)
+        pdfPreviewUrlRef.current = ''
+        setPdfPreviewUrl('')
+        setSourcePdf(null)
+        setSourceDocx(file)
+        setPdfPageCount(0)
+        setPdfFields([])
+        setPlacingFieldKey('')
+        setContent(importedText || 'Documento Word sem texto extraível.')
+        return
+      }
       const importedText = await extractPdfText(file)
       const pageCount = await getPdfPageCount(file)
       pdfSelectionVersionRef.current += 1
@@ -108,6 +141,7 @@ export function TemplateEditorPage() {
       pdfPreviewUrlRef.current = url
       setPdfPreviewUrl(url)
       setSourcePdf(file)
+      setSourceDocx(null)
       setPdfPageCount(pageCount)
       setPdfFields([])
       setPlacingFieldKey('')
@@ -120,6 +154,33 @@ export function TemplateEditorPage() {
       event.target.value = ''
     }
   }
+
+  useEffect(() => {
+    const host = docxPreviewRef.current
+    if (!showPreview || !sourceDocx || !host) return
+    let active = true
+    let resizeObserver: ResizeObserver | undefined
+    void (async () => {
+      try {
+        const { renderAsync } = await import('docx-preview')
+        const pageMount = document.createElement('div')
+        const styleMount = document.createElement('div')
+        await renderAsync(sourceDocx, pageMount, styleMount, { className: 'miellis-docx-preview', ignoreWidth: false, ignoreHeight: true, breakPages: true, renderHeaders: true, renderFooters: true })
+        if (!active) return
+        host.replaceChildren(styleMount, pageMount)
+        const fitPage = () => {
+          const firstPage = pageMount.querySelector<HTMLElement>('.miellis-docx-preview')
+          if (firstPage) pageMount.style.setProperty('--docx-preview-zoom', String(Math.min(1, (host.clientWidth - 26) / firstPage.offsetWidth)))
+        }
+        fitPage()
+        resizeObserver = new ResizeObserver(fitPage)
+        resizeObserver.observe(host)
+      } catch {
+        if (active) setError('Não foi possível renderizar a prévia do Word original.')
+      }
+    })()
+    return () => { active = false; resizeObserver?.disconnect(); host.replaceChildren() }
+  }, [showPreview, sourceDocx])
 
   useEffect(() => {
     if (!sourcePdf || pdfPageCount === 0) return
@@ -188,8 +249,8 @@ export function TemplateEditorPage() {
     setBusy(true)
     try {
       const saved = isEdit && template
-        ? await updateTemplate(template.id, { ...validation.data, sourcePdf, pdfFields }, user.id)
-        : await createTemplate({ ...validation.data, sourcePdf, pdfFields }, user.id)
+        ? await updateTemplate(template.id, { ...validation.data, sourcePdf, sourceDocx, pdfFields }, user.id)
+        : await createTemplate({ ...validation.data, sourcePdf, sourceDocx, pdfFields }, user.id)
       navigate('/modelos', { replace: true, state: { notice: isEdit ? `Nova versão v${saved.version} salva; versões anteriores foram mantidas.` : 'Modelo cadastrado.' } })
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Não foi possível salvar o modelo.')
@@ -207,12 +268,12 @@ export function TemplateEditorPage() {
           <div className="editor-section-head"><div><span className="section-overline">IDENTIFICAÇÃO</span><h2>Dados do modelo</h2></div>{isEdit && <span className="field-count">Nova versão após salvar</span>}</div>
           <div className="template-metadata-grid"><label className="editor-field">Nome do modelo<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Locação residencial Miellis" required /></label><label className="editor-field">Tipo<select value={type} onChange={(event) => setType(event.target.value)} required><option value="">Selecionar tipo</option><option>Locação residencial</option><option>Compra e venda</option><option>Administração</option><option>Outro</option></select></label></div>
           <div className="pdf-import-row">
-            <input ref={fileInputRef} type="file" accept="application/pdf" onChange={(event) => void handlePdfUpload(event)} hidden />
+            <input ref={fileInputRef} type="file" accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handlePdfUpload(event)} hidden />
             <button className="outline-button pdf-import-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={uploadingPdf}>
               {uploadingPdf ? <LoaderCircle className="spin-icon" size={15} /> : <FileUp size={15} />}
-              {uploadingPdf ? 'Importando PDF...' : sourcePdf ? 'Trocar PDF original' : 'Importar PDF original'}
+              {uploadingPdf ? 'Importando documento...' : sourcePdf || sourceDocx ? 'Trocar documento original' : 'Importar PDF ou DOCX'}
             </button>
-            <span>{sourcePdf ? `${pdfPageCount || '...'} páginas · ${pdfFields.length} campos posicionados` : 'Importe o PDF e clique onde cada informação deve aparecer.'}</span>
+            <span>{sourcePdf ? `${pdfPageCount || '...'} páginas · ${pdfFields.length} campos posicionados` : sourceDocx ? `${sourceDocx.name} · use marcadores {{campo}} no Word` : 'PDF: posicione campos. DOCX: use marcadores {{campo}}.'}</span>
           </div>
           {sourcePdf && <div className="pdf-field-setup">
             <label className="editor-field">Campo para posicionar<select value={selectedFieldKey} onChange={(event) => setSelectedFieldKey(event.target.value)}>{fieldOptions.map((field) => <option key={field} value={field}>{field === 'campo_personalizado' ? 'Outro dado...' : getFieldLabel(field)}</option>)}</select></label>
@@ -222,19 +283,19 @@ export function TemplateEditorPage() {
             <p className="preview-footnote">Posicione sobre espaços em branco do documento. Você pode adicionar o mesmo dado mais de uma vez.</p>
           </div>}
           <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">DOCUMENTO</span><h2>Conteúdo do template</h2></div><button className="icon-button preview-toggle" type="button" onClick={() => setShowPreview((value) => !value)} title="Alternar prévia" aria-label="Alternar prévia"><Eye size={16} /></button></div>
-          <label className="editor-field template-content-label">{sourcePdf ? 'Texto extraído para referência dos campos' : 'Texto aprovado pela imobiliária'}<textarea value={content} onChange={(event) => setContent(event.target.value)} readOnly={Boolean(sourcePdf)} placeholder={'Cole o documento aprovado pela Miellis e adicione os campos variáveis, por exemplo:\n\nLOCADOR: {{locador_nome}}\nCPF/CNPJ: {{locador_cpf}}\n\nUse apenas placeholders que existam no modelo autorizado.'} rows={17} required /></label>
+          <label className="editor-field template-content-label">{sourcePdf || sourceDocx ? 'Texto extraído para referência dos campos' : 'Texto aprovado pela imobiliária'}<textarea value={content} onChange={(event) => setContent(event.target.value)} readOnly={Boolean(sourcePdf || sourceDocx)} placeholder={'Cole o documento aprovado pela Miellis e adicione os campos variáveis, por exemplo:\n\nVENDEDOR: {{vendedor_nome}}\nCPF: {{vendedor_cpf}}\n\nUse apenas campos que existam no documento autorizado.'} rows={17} required /></label>
           {!sourcePdf && <div className="placeholder-summary"><span><Braces size={15} />{fields.length} {fields.length === 1 ? 'campo identificado' : 'campos identificados'}</span><div>{fields.map((field) => <code key={field}>{`{{${field}}}`}</code>)}</div></div>}
           {error && <div className="inline-alert" role="alert">{error}</div>}
           <footer className="editor-actions"><span>{isEdit ? `Versão atual: ${template?.version ?? '—'}` : 'As versões salvas não apagam modelos anteriores.'}</span><button className="gold-button" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin-icon" size={15} /> : isEdit ? <Plus size={15} /> : <Save size={15} />}{busy ? 'Salvando...' : isEdit ? 'Salvar nova versão' : 'Cadastrar modelo'}</button></footer>
         </form>
-        {showPreview && <section className="template-live-preview"><div className="preview-panel-head"><div><span className="section-overline">PDF ORIGINAL</span><h2>{name || 'Novo modelo'}</h2></div><span className="paper-size">{fieldCount} {fieldCount === 1 ? 'campo' : 'campos'}</span></div>{sourcePdf && pdfPageCount > 0 ? <div className="pdf-placement-pages">{[...Array(pdfPageCount).keys()].map((index) => {
+        {showPreview && <section className="template-live-preview"><div className="preview-panel-head"><div><span className="section-overline">{sourceDocx ? 'WORD ORIGINAL' : 'PDF ORIGINAL'}</span><h2>{name || 'Novo modelo'}</h2></div><span className="paper-size">{fieldCount} {fieldCount === 1 ? 'campo' : 'campos'}</span></div>{sourceDocx ? <div className="docx-preview-host" ref={docxPreviewRef} /> : sourcePdf && pdfPageCount > 0 ? <div className="pdf-placement-pages">{[...Array(pdfPageCount).keys()].map((index) => {
           const page = index + 1
           return <div className={`pdf-placement-page${placingFieldKey ? ' is-placing' : ''}`} key={page} onClick={(event) => placeField(event, page)}>
             <canvas ref={(canvas) => { if (canvas) pdfCanvasRefs.current.set(page, canvas); else pdfCanvasRefs.current.delete(page) }} className="pdf-placement-canvas" />
             {pdfFields.filter((field) => field.page === page).map((field, fieldIndex) => <span className="pdf-placement-marker" key={`${field.key}-${fieldIndex}`} style={{ left: `${field.x}%`, top: `${field.y}%`, width: `${field.width}%` }}>{field.label}</span>)}
             <span className="pdf-placement-page-number">Página {page}</span>
           </div>
-        })}</div> : pdfPreviewUrl ? <iframe className="template-pdf-viewer" src={pdfPreviewUrl} title={`PDF original: ${name || 'novo modelo'}`} /> : <Suspense fallback={<div className="template-pdf-loading">Preparando prévia...</div>}><LivePdfPreview title={name || 'Novo modelo'} content={content || 'O conteúdo do documento aparecerá aqui.'} /></Suspense>}<p className="preview-footnote">{placingFieldKey ? 'Clique no documento no local em que o valor deverá aparecer.' : 'O PDF original é preservado. Adicione campos clicando nos espaços em branco.'}</p></section>}
+        })}</div> : pdfPreviewUrl ? <iframe className="template-pdf-viewer" src={pdfPreviewUrl} title={`PDF original: ${name || 'novo modelo'}`} /> : <Suspense fallback={<div className="template-pdf-loading">Preparando prévia...</div>}><LivePdfPreview title={name || 'Novo modelo'} content={content || 'O conteúdo do documento aparecerá aqui.'} /></Suspense>}<p className="preview-footnote">{placingFieldKey ? 'Clique no documento no local em que o valor deverá aparecer.' : sourceDocx ? 'O arquivo Word é preservado e seus marcadores são substituídos na geração.' : 'O PDF original é preservado. Adicione campos clicando nos espaços em branco.'}</p></section>}
       </div>
     </div>
   )

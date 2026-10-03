@@ -5,6 +5,11 @@ import type { Client, Property } from '../types/domain'
 const DEMO_CLIENTS_KEY = 'miellis-demo-clients-v1'
 const DEMO_PROPERTIES_KEY = 'miellis-demo-properties-v1'
 
+function isMissingRegistryNumberColumn(error: { code?: string, message?: string }) {
+  const message = error.message?.toLocaleLowerCase('en-US') ?? ''
+  return error.code === '42703' || error.code === 'PGRST204' || (message.includes('registry_number') && (message.includes('column') || message.includes('schema cache') || message.includes('does not exist')))
+}
+
 function readDemoList<T>(key: string, seed: T[]): T[] {
   try {
     const saved = localStorage.getItem(key)
@@ -27,6 +32,9 @@ export async function listProperties(): Promise<Property[]> {
   if (!supabase) return []
   const { data, error } = await supabase.from('properties').select('id, code, address, number, complement, neighborhood, city, state, postal_code, type, area, bedrooms, bathrooms, owner_id, notes').order('code')
   if (error) throw error
+  const { data: registrations, error: registryError } = await supabase.from('properties').select('id, registry_number')
+  if (registryError && !isMissingRegistryNumberColumn(registryError)) throw registryError
+  const registryById = registryError ? new Map<string, string>() : new Map((registrations ?? []).map((item) => [item.id, item.registry_number ?? '']))
   return (data ?? []).map((property) => ({
     id: property.id,
     code: property.code,
@@ -37,6 +45,7 @@ export async function listProperties(): Promise<Property[]> {
     city: property.city,
     state: property.state,
     postalCode: property.postal_code,
+    registryNumber: registryById.get(property.id) ?? '',
     kind: property.type,
     area: property.area ?? undefined,
     bedrooms: property.bedrooms ?? undefined,
@@ -72,12 +81,16 @@ export async function saveProperty(input: Omit<Property, 'id'>, userId: string, 
     return saved
   }
   if (!supabase) throw new Error('Configure o Supabase antes de cadastrar imóveis.')
-  const payload = { code: input.code.trim(), address: input.address.trim(), number: input.number?.trim() ?? '', complement: input.complement?.trim() ?? '', neighborhood: input.neighborhood?.trim() ?? '', city: input.city.trim(), state: input.state.trim().toUpperCase(), postal_code: input.postalCode?.replace(/\D/g, '') ?? '', type: input.kind, area: input.area ?? null, bedrooms: input.bedrooms ?? null, bathrooms: input.bathrooms ?? null, owner_id: input.ownerId ?? null, notes: input.notes?.trim() ?? '' }
+  const registryNumber = input.registryNumber?.trim() ?? ''
+  const payload = { code: input.code.trim(), address: input.address.trim(), number: input.number?.trim() ?? '', complement: input.complement?.trim() ?? '', neighborhood: input.neighborhood?.trim() ?? '', city: input.city.trim(), state: input.state.trim().toUpperCase(), postal_code: input.postalCode?.replace(/\D/g, '') ?? '', ...(registryNumber ? { registry_number: registryNumber } : {}), type: input.kind, area: input.area ?? null, bedrooms: input.bedrooms ?? null, bathrooms: input.bathrooms ?? null, owner_id: input.ownerId ?? null, notes: input.notes?.trim() ?? '' }
   const query = id
     ? supabase.from('properties').update(payload).eq('id', id)
     : supabase.from('properties').insert({ ...payload, created_by: userId })
   const { data, error } = await query.select('id, code, address, number, complement, neighborhood, city, state, postal_code, type, area, bedrooms, bathrooms, owner_id, notes').single()
-  if (error) throw error
+  if (error) {
+    if (registryNumber && isMissingRegistryNumberColumn(error)) throw new Error('Aplique a migração da matrícula do imóvel no Supabase antes de salvá-la para próximos contratos.')
+    throw error
+  }
   await supabase.from('audit_logs').insert({ user_id: userId, action: id ? 'property.updated' : 'property.created', entity_type: 'property', entity_id: data.id })
-  return { ...data, postalCode: data.postal_code ?? '', kind: data.type, ownerId: data.owner_id ?? undefined }
+  return { ...data, postalCode: data.postal_code ?? '', registryNumber, kind: data.type, ownerId: data.owner_id ?? undefined }
 }

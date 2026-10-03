@@ -36,7 +36,7 @@ Nenhum contrato jurídico é incluído. O modelo demonstrativo, quando habilitad
 ## Supabase
 
 1. Crie um projeto Supabase e configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` no `.env.local`.
-2. Aplique as migrations em `supabase/migrations/` em ordem no SQL Editor do projeto. `202609280001_template_source_pdfs.sql` e `202609280002_template_pdf_fields.sql` habilitam o PDF original e os campos visuais; `202609280003_contract_drafts.sql` cria a tabela de rascunhos; `202609280004_contract_status_values.sql` amplia os status aceitos em `contracts` (convertendo `review` em `in_review`); `202609300001_template_source_docx.sql` habilita arquivos DOCX nos modelos.
+2. Aplique as migrations em `supabase/migrations/` em ordem no SQL Editor do projeto. `202609280001_template_source_pdfs.sql` e `202609280002_template_pdf_fields.sql` habilitam o PDF original e os campos visuais; `202609280003_contract_drafts.sql` cria a tabela de rascunhos; `202609280004_contract_status_values.sql` amplia os status aceitos em `contracts` (convertendo `review` em `in_review`); `202609300001_template_source_docx.sql` habilita arquivos DOCX; `202610030001_add_property_registry_number.sql` permite guardar a matrícula do imóvel para contratos futuros.
 3. Convide colaboradores pelo Supabase Auth. O trigger cria o perfil como `broker`. Para o primeiro administrador, atualize `profiles.role` para `admin` no SQL Editor do projeto; depois, administradores existentes podem ajustar funções na área interna.
 4. Defina `VITE_DEMO_MODE=false` e reinicie o Vite.
 

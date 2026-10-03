@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthContext'
 import { ClientEditor, PropertyEditor } from './RecordsPages'
 import { DocumentImportPanel } from '../components/DocumentImportPanel'
 import { createAndDownloadContract, downloadBlankOfficialContract, isWordTemplate, renderContractDocx, renderContractPdf } from '../services/contracts'
-import { listClients, listProperties } from '../services/records'
+import { listClients, listProperties, saveProperty } from '../services/records'
 import { getTemplatePdfBytes, listTemplates } from '../services/templates'
 import { formatTemplateValue, getFieldGroup, getFieldLabel, getFieldType, extractPlaceholders, renderTemplate } from '../lib/placeholders'
 import { formatCurrency, formatDocument, formatPhone, formatPostalCode, formatPropertyAddress, validateContractFields } from '../utils/format'
@@ -47,6 +47,7 @@ export function NewContractPage() {
   const [pdfPreview, setPdfPreview] = useState<{ key: string; url?: string; error?: string } | null>(null)
   const [clientEditorOpen, setClientEditorOpen] = useState(false)
   const [propertyEditorOpen, setPropertyEditorOpen] = useState(false)
+  const [savingRegistry, setSavingRegistry] = useState(false)
   const [activeGroupIndex, setActiveGroupIndex] = useState(0)
   const [previewStatus, setPreviewStatus] = useState('Preparando prévia...')
   const previewHostRef = useRef<HTMLDivElement | null>(null)
@@ -103,6 +104,8 @@ export function NewContractPage() {
   }, [fields])
   const renderedContent = template ? renderTemplate(template.content, Object.fromEntries(fields.map((field) => [field, formatTemplateValue(field, values[field] ?? '')]))) : ''
   const missingCount = fields.filter((field) => !field.startsWith('opcional_') && !values[field]?.trim()).length
+  const propertyRegistryField = fields.includes('imovel_matricula') ? 'imovel_matricula' : fields.includes('opcional_imovel_matricula') ? 'opcional_imovel_matricula' : ''
+  const propertyRegistryValue = propertyRegistryField ? values[propertyRegistryField]?.trim() ?? '' : ''
   const currentGroup = groupedFields[activeGroupIndex]
   const currentGroupMissing = currentGroup?.[1].filter((field) => !field.startsWith('opcional_') && !values[field]?.trim()).length ?? 0
   const previewKey = template ? `${template.id}:${template.versionId ?? template.version}:${JSON.stringify(values)}` : ''
@@ -201,21 +204,49 @@ export function NewContractPage() {
   }
 
   function selectProperty(id: string) {
+    const previousProperty = properties.find((item) => item.id === propertyId)
+    const previousOwner = clients.find((item) => item.id === previousProperty?.ownerId)
     setPropertyId(id)
     const property = properties.find((item) => item.id === id)
     if (!property) return
     const owner = clients.find((item) => item.id === property.ownerId)
-    setValues((current) => ({
-      ...current,
-      ...(owner && fields.includes('locador_nome') ? { locador_nome: owner.name } : {}),
-      ...(owner && fields.includes('locador_cpf') ? { locador_cpf: owner.document } : {}),
-      ...(owner && fields.includes('locador_telefone') ? { locador_telefone: owner.phone } : {}),
-      ...(owner && fields.includes('locador_email') ? { locador_email: owner.email } : {}),
-      ...(fields.includes('imovel_endereco') ? { imovel_endereco: formatPropertyAddress(property) } : {}),
-      ...(fields.includes('imovel_cidade') ? { imovel_cidade: property.city } : {}),
-      ...(fields.includes('imovel_estado') ? { imovel_estado: property.state } : {}),
-      ...(fields.includes('imovel_codigo') ? { imovel_codigo: property.code } : {}),
-    }))
+    const propertyValues: Array<[string, string, string | undefined]> = [
+      ['imovel_endereco', formatPropertyAddress(property), previousProperty ? formatPropertyAddress(previousProperty) : undefined],
+      ['imovel_cidade', property.city, previousProperty?.city], ['imovel_estado', property.state, previousProperty?.state],
+      ['imovel_codigo', property.code, previousProperty?.code], ['imovel_matricula', property.registryNumber ?? '', previousProperty?.registryNumber],
+    ]
+    const ownerValues: Array<[string, string, string | undefined]> = owner || previousOwner ? [
+      ['vendedor_nome', owner?.name ?? '', previousOwner?.name], ['vendedor_cpf', owner?.document ?? '', previousOwner?.document],
+      ['vendedor_telefone', owner?.phone ?? '', previousOwner?.phone], ['vendedor_email', owner?.email ?? '', previousOwner?.email], ['vendedor_endereco', owner?.address ?? '', previousOwner?.address],
+      ['locador_nome', owner?.name ?? '', previousOwner?.name], ['locador_cpf', owner?.document ?? '', previousOwner?.document],
+      ['locador_telefone', owner?.phone ?? '', previousOwner?.phone], ['locador_email', owner?.email ?? '', previousOwner?.email], ['locador_endereco', owner?.address ?? '', previousOwner?.address],
+    ] : []
+    setValues((current) => {
+      const next = { ...current }
+      for (const [field, value, previousValue] of [...propertyValues, ...ownerValues]) {
+        const target = fields.includes(field) ? field : fields.includes(`opcional_${field}`) ? `opcional_${field}` : ''
+        if (target && (!current[target]?.trim() || current[target] === previousValue)) next[target] = value
+      }
+      return next
+    })
+  }
+
+  async function savePropertyRegistry() {
+    const property = properties.find((item) => item.id === propertyId)
+    const registryNumber = propertyRegistryValue
+    if (!property || !registryNumber || !user) return
+    setSavingRegistry(true)
+    try {
+      const { id, ...propertyData } = property
+      const saved = await saveProperty({ ...propertyData, registryNumber }, user.id, id)
+      setProperties((current) => current.map((item) => item.id === saved.id ? saved : item))
+      setSuccess(`Matrícula salva no cadastro de ${saved.code} para próximos contratos.`)
+      setValidationError('')
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : 'Não foi possível salvar a matrícula do imóvel.')
+    } finally {
+      setSavingRegistry(false)
+    }
   }
 
   async function generate() {
@@ -366,6 +397,7 @@ export function NewContractPage() {
             {fields.length > 0 && <>
               <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">04 · LEITURA AUTOMÁTICA</span><h2>Documentos</h2></div></div>
               <DocumentImportPanel key={templateId} fields={fields} values={values} onApply={applyExtractedValues} />
+              {propertyId && propertyRegistryValue && <button className="outline-button" type="button" onClick={() => void savePropertyRegistry()} disabled={savingRegistry}><Check size={14} />{savingRegistry ? 'Salvando matrícula...' : 'Salvar matrícula na ficha do imóvel para próximos contratos'}</button>}
             </>}
 
             <div className="editor-section-head editor-section-spaced"><div><span className="section-overline">05 · COMPLEMENTO</span><h2>Dados do contrato</h2></div><span className="field-count">{activeGroupIndex + 1} de {groupedFields.length} etapas</span></div>

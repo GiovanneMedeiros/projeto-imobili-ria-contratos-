@@ -67,6 +67,7 @@ export interface Property {
   complement?: string
   neighborhood?: string
   postalCode?: string
+  registryNumber?: string
   area?: number
   bedrooms?: number
   bathrooms?: number

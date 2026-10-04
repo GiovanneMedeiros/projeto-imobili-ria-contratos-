@@ -1,6 +1,7 @@
 import { AlertTriangle, Camera, Check, FileUp, LoaderCircle, ScanText, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createDocumentReader } from '../lib/documentOcr'
+import { scanImageWithGemini } from '../lib/geminiDocumentScan'
 import { DOCUMENT_KIND_LABELS, detectDocumentKind, parsePersonDocument, parsePropertyRegistration, type DocumentKind, type Extracted, type PersonKey, type PropertyKey } from '../lib/documentParser'
 import { getFieldGroup, getFieldLabel, getFieldType } from '../lib/placeholders'
 
@@ -35,6 +36,7 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
   }, [fields])
   const [role, setRole] = useState('')
   const [kind, setKind] = useState<'auto' | DocumentKind>('auto')
+  const [scanMode, setScanMode] = useState<'local' | 'gemini'>('local')
   const [progress, setProgress] = useState('')
   const [review, setReview] = useState<Record<string, ReviewValue>>({})
   const [extras, setExtras] = useState<ExtraInfo[]>([])
@@ -83,10 +85,26 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
     try {
       for (const file of files) {
         try {
-          const { text } = await reader.read(file, setProgress)
+          const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+          let text: string
+          let scanSource = 'OCR local'
+          if (scanMode === 'gemini' && !isPdf) {
+            try {
+              text = await scanImageWithGemini(file, setProgress)
+              scanSource = 'Gemini'
+            } catch (error) {
+              setProgress('Gemini indisponível; tentando OCR local...')
+              text = (await reader.read(file, setProgress)).text
+              scanSource = 'OCR local (fallback Gemini)'
+              draftNotes.push(`A imagem ${file.name} foi lida pelo OCR local porque o Gemini não estava disponível: ${error instanceof Error ? error.message : 'falha na leitura.'}`)
+            }
+          } else {
+            text = (await reader.read(file, setProgress)).text
+            if (scanMode === 'gemini' && isPdf) scanSource = 'OCR local (PDF)'
+          }
           if (text.replace(/\s/g, '').length < 20) throw new Error('Nenhum texto legível. Tente uma foto mais nítida, reta e bem iluminada.')
           const detected = activeRole === 'imovel' ? 'matricula' : kind === 'auto' ? detectDocumentKind(text) : kind
-          const source = `${DOCUMENT_KIND_LABELS[detected]} · ${file.name}`
+          const source = `${DOCUMENT_KIND_LABELS[detected]} · ${file.name} · ${scanSource}`
           if (detected === 'matricula') {
             const result = parsePropertyRegistration(text)
             for (const key of Object.keys(result.fields) as PropertyKey[]) put('imovel', key, result.fields[key], source)
@@ -184,8 +202,14 @@ export function DocumentImportPanel({ fields, values, onApply }: DocumentImportP
 
   return (
     <div className="doc-import">
-      <p className="doc-import-intro"><ScanText size={15} />Envie ou fotografe RG, CNH, CPF, certidões, comprovante de residência ou a matrícula. A leitura acontece no próprio navegador — os documentos não são enviados a nenhum servidor.</p>
+      <p className="doc-import-intro"><ScanText size={15} />Escolha OCR local para manter o arquivo no navegador ou Gemini para enviar imagens ao serviço do Google. PDFs usam o OCR local; confira todos os dados antes de gerar o contrato.</p>
       <div className="reference-grid">
+        <label className="editor-field">Leitura da imagem
+          <select value={scanMode} onChange={(event) => setScanMode(event.target.value as 'local' | 'gemini')} disabled={Boolean(progress)}>
+            <option value="local">OCR local (privado)</option>
+            <option value="gemini">Gemini AI (envia imagem ao Google)</option>
+          </select>
+        </label>
         <label className="editor-field">Documento de quem?
           <select value={activeRole} onChange={(event) => setRole(event.target.value)} disabled={Boolean(progress)}>
             {roles.map(([prefix, label]) => <option value={prefix} key={prefix}>{label}</option>)}

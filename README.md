@@ -22,6 +22,8 @@ npm run dev
 
 Em outro terminal, inicie a API com `npm run dev:api`; alternativamente, use `npm run dev:all` quando as portas 5173 e 3333 estiverem livres.
 
+Para ativar a leitura de imagens com Gemini, crie uma chave no Google AI Studio e configure no `.env` da raiz `GEMINI_API_KEY`, `SUPABASE_URL` e `SUPABASE_ANON_KEY` (os valores do projeto Supabase também podem ser copiados das variáveis `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`). O Gemini 3.8 Flash tem cota gratuita sujeita aos limites e às condições atuais do Google. Opcionalmente, defina `GEMINI_MODEL`; o padrão é `gemini-3.8-flash`. Reinicie a API depois de alterar o arquivo. A chave Gemini nunca deve ser colocada em variáveis `VITE_` nem no frontend. A rota exige uma sessão Supabase válida, aceita imagens JPG/PNG/WebP de até 8 MB e limita cada usuário a 10 imagens por minuto. A opção OCR local não envia documentos a terceiros; ao escolher Gemini, imagens são enviadas ao Google para transcrição. PDFs continuam usando OCR local.
+
 O modo de demonstração pode ser habilitado com `VITE_DEMO_MODE=true`. Ele usa somente dados de desenvolvimento e não deve ser usado para contratos ou dados reais. Para autenticação real, configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` no `.env.local`.
 
 ## Estrutura
